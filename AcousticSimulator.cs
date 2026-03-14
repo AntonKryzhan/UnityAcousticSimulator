@@ -131,6 +131,7 @@ namespace PhysicalAcousticsSim
 
 		public List<MicFeedbackResult> MicrophoneResults => microphoneResults;
 		public List<HotspotResult> Hotspots => hotspots;
+		public BandLimitedRoomOperatorSolver LateFieldOperatorSolver => lateFieldOperatorSolver;
 
 		[ContextMenu("Auto Collect Scene Objects")]
 		public void AutoCollect()
@@ -171,36 +172,10 @@ namespace PhysicalAcousticsSim
 				AutoCollect();
 			}
 
-			RebuildMaterialGraph();
-			roomBounds = ComputeRoomBounds();
-			microphoneResults.Clear();
-			hotspots.Clear();
-			ClearDebugPropagationRays();
-
-			if (lateFieldOperatorSolver != null && lateFieldOperatorSolver.isActiveAndEnabled)
-			{
-				lateFieldOperatorSolver.BuildField(
-					roomBounds,
-					speakers,
-					materials,
-					mixer,
-					acousticLayerMask,
-					airTemperatureC,
-					humidityPercent,
-					probeHeight,
-					IsPointInsideMaterial
-				);
-			}
-
-			BuildDebugPropagationRays();
-			AnalyzeMicrophones();
-			AnalyzeListeners();
-			AnalyzeGrid();
-
-			if (logResultsToConsole)
-			{
-				LogSimulationResults();
-			}
+			RunPropagation();
+			RunFeedback();
+			RunReporting();
+			RunGizmos();
 		}
 
 		[ContextMenu("Clear Results")]
@@ -214,6 +189,40 @@ namespace PhysicalAcousticsSim
 			{
 				lateFieldOperatorSolver.ClearField();
 			}
+		}
+
+
+		private void RunPropagation()
+		{
+			RebuildMaterialGraph();
+			roomBounds = ComputeRoomBounds();
+			microphoneResults.Clear();
+			hotspots.Clear();
+			ClearDebugPropagationRays();
+			if (lateFieldOperatorSolver != null && lateFieldOperatorSolver.isActiveAndEnabled)
+			{
+				lateFieldOperatorSolver.BuildField(roomBounds, speakers, materials, mixer, acousticLayerMask, airTemperatureC, humidityPercent, probeHeight, IsPointInsideMaterial);
+			}
+		}
+
+		private void RunFeedback()
+		{
+			AnalyzeMicrophones();
+			AnalyzeListeners();
+			AnalyzeGrid();
+		}
+
+		private void RunReporting()
+		{
+			if (logResultsToConsole)
+			{
+				LogSimulationResults();
+			}
+		}
+
+		private void RunGizmos()
+		{
+			BuildDebugPropagationRays();
 		}
 
 		private void AnalyzeMicrophones()

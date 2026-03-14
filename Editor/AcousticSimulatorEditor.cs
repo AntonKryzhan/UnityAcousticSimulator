@@ -52,6 +52,22 @@ namespace PhysicalAcousticsSim
 				EditorGUILayout.LabelField("Microphones", simulator.MicrophoneResults.Count.ToString());
 				EditorGUILayout.LabelField("Hotspots", simulator.Hotspots.Count.ToString());
 			}
+
+			BandLimitedRoomOperatorSolver solver = simulator.LateFieldOperatorSolver;
+			if (solver != null)
+			{
+				EditorGUILayout.Space(8f);
+				EditorGUILayout.LabelField("Late Field Effective Settings", EditorStyles.boldLabel);
+				EditorGUILayout.LabelField("Quality", solver.Quality.ToString());
+				EditorGUILayout.LabelField("Bands", solver.EffectiveBandCount.ToString());
+				EditorGUILayout.LabelField("Cell Size", solver.EffectiveCellSizeMeters.ToString("F3") + " m");
+				EditorGUILayout.LabelField("Iterations", solver.EffectiveIterationCount.ToString());
+				EditorGUILayout.LabelField("Height Layers", solver.EffectiveLateFieldHeightLayers.ToString());
+				EditorGUILayout.LabelField("Transport", solver.EffectiveTransport.ToString("F3"));
+				EditorGUILayout.LabelField("Source Coupling", solver.EffectiveSourceCoupling.ToString("F3"));
+				EditorGUILayout.LabelField("Late Scale", solver.EffectiveLateFieldScale.ToString("F3"));
+				EditorGUILayout.LabelField("Global Damping", solver.EffectiveGlobalDamping.ToString("F3"));
+			}
 		}
 	}
 }
