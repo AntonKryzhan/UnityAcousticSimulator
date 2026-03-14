@@ -7,7 +7,15 @@ namespace PhysicalAcousticsSim
     [DisallowMultipleComponent]
     public sealed class BandLimitedRoomOperatorSolver : MonoBehaviour
     {
+        public enum SolverQuality
+        {
+            Fast,
+            Balanced,
+            Detailed
+        }
+
         [Header("Operator Solver")]
+        [SerializeField] private SolverQuality quality = SolverQuality.Balanced;
         [SerializeField] private float cellSizeMeters = 0.75f;
         [SerializeField] [Min(1)] private int iterationCount = 48;
         [SerializeField] [Range(0.01f, 0.95f)] private float transport = 0.22f;
@@ -23,11 +31,20 @@ namespace PhysicalAcousticsSim
         [Header("Debug")]
         [SerializeField] private Bounds lastBounds;
         [SerializeField] private Vector2Int gridSize;
+        [SerializeField] private int effectiveBandCount = AcousticBands.Count;
+        [SerializeField] private float effectiveCellSizeMeters = 0.75f;
+        [SerializeField] private int effectiveIterationCount = 48;
+        [SerializeField] private float effectiveTransport = 0.16f;
+        [SerializeField] private float effectiveSourceCoupling = 0.025f;
+        [SerializeField] private float effectiveLateFieldScale = 0.20f;
+        [SerializeField] private float effectiveGlobalDamping = 0.05f;
+        [SerializeField] [Min(1)] private int lateFieldHeightLayers = 3;
         [SerializeField] private float[] averageAbsorption = new float[AcousticBands.Count];
         [SerializeField] private float[] averageReflection = new float[AcousticBands.Count];
 
-        [NonSerialized] private float[][] bandFields;
-        [NonSerialized] private bool[] blocked;
+        [NonSerialized] private float[][][] layeredBandFields;
+        [NonSerialized] private bool[][] blockedPerLayer;
+        [NonSerialized] private float[] layerHeights;
         [NonSerialized] private int width;
         [NonSerialized] private int depth;
         [NonSerialized] private Bounds bounds;
@@ -36,6 +53,16 @@ namespace PhysicalAcousticsSim
 
         public bool HasField => hasField;
 
+        public SolverQuality Quality => quality;
+        public int EffectiveBandCount => effectiveBandCount;
+        public float EffectiveCellSizeMeters => effectiveCellSizeMeters;
+        public int EffectiveIterationCount => effectiveIterationCount;
+        public float EffectiveTransport => effectiveTransport;
+        public float EffectiveSourceCoupling => effectiveSourceCoupling;
+        public float EffectiveLateFieldScale => effectiveLateFieldScale;
+        public float EffectiveGlobalDamping => effectiveGlobalDamping;
+        public int EffectiveLateFieldHeightLayers => lateFieldHeightLayers;
+
         private void OnValidate()
         {
             cellSizeMeters = Mathf.Max(0.1f, cellSizeMeters);
@@ -43,6 +70,8 @@ namespace PhysicalAcousticsSim
             maxSourceDistanceMeters = Mathf.Max(1f, maxSourceDistanceMeters);
             wallInfluenceMeters = Mathf.Max(0.05f, wallInfluenceMeters);
             overrideProbeHeight = Mathf.Max(-100f, overrideProbeHeight);
+            lateFieldHeightLayers = Mathf.Max(1, lateFieldHeightLayers);
+            RebuildEffectiveSettings();
             AcousticBands.EnsureArray(ref averageAbsorption, 0.15f);
             AcousticBands.EnsureArray(ref averageReflection, 0.80f);
         }
@@ -50,8 +79,9 @@ namespace PhysicalAcousticsSim
         public void ClearField()
         {
             hasField = false;
-            bandFields = null;
-            blocked = null;
+            layeredBandFields = null;
+            blockedPerLayer = null;
+            layerHeights = null;
             width = 0;
             depth = 0;
             gridSize = Vector2Int.zero;
@@ -65,15 +95,25 @@ namespace PhysicalAcousticsSim
             bounds = roomBounds;
             lastBounds = roomBounds;
             yPlane = useSimulatorProbeHeight ? simulatorProbeHeight : overrideProbeHeight;
+            RebuildEffectiveSettings();
 
-            width = Mathf.Max(1, Mathf.CeilToInt(roomBounds.size.x / cellSizeMeters));
-            depth = Mathf.Max(1, Mathf.CeilToInt(roomBounds.size.z / cellSizeMeters));
+            width = Mathf.Max(1, Mathf.CeilToInt(roomBounds.size.x / effectiveCellSizeMeters));
+            depth = Mathf.Max(1, Mathf.CeilToInt(roomBounds.size.z / effectiveCellSizeMeters));
             gridSize = new Vector2Int(width, depth);
             int cellCount = width * depth;
 
-            blocked = new bool[cellCount];
-            bandFields = new float[AcousticBands.Count][];
-            for (int b = 0; b < AcousticBands.Count; b++) bandFields[b] = new float[cellCount];
+            int layerCount = Mathf.Max(1, lateFieldHeightLayers);
+            layerHeights = new float[layerCount];
+            blockedPerLayer = new bool[layerCount][];
+            layeredBandFields = new float[layerCount][][];
+            for (int ly = 0; ly < layerCount; ly++)
+            {
+                blockedPerLayer[ly] = new bool[cellCount];
+                layeredBandFields[ly] = new float[AcousticBands.Count][];
+                for (int b = 0; b < AcousticBands.Count; b++) layeredBandFields[ly][b] = new float[cellCount];
+                float t = layerCount <= 1 ? 0.5f : ly / (float)(layerCount - 1);
+                layerHeights[ly] = Mathf.Lerp(bounds.min.y + 0.1f, bounds.max.y - 0.1f, t);
+            }
 
             List<Bounds> materialBounds = new List<Bounds>();
             if (materials != null)
@@ -86,27 +126,26 @@ namespace PhysicalAcousticsSim
 
             ComputeAverageMaterialCoefficients(materials);
 
-            float effectiveTransport = Mathf.Min(transport, 0.16f);
-            float effectiveSourceCoupling = Mathf.Min(sourceCoupling, 0.025f);
-            float effectiveLateFieldScale = Mathf.Min(lateFieldScale, 0.20f);
-            float effectiveGlobalDamping = Mathf.Max(globalDamping, 0.05f);
-
-            float[][] source = new float[AcousticBands.Count][];
-            for (int b = 0; b < AcousticBands.Count; b++) source[b] = new float[cellCount];
+            int bandCount = Mathf.Clamp(effectiveBandCount, 1, AcousticBands.Count);
 
             float[] transmissionScratch = new float[AcousticBands.Count];
-
-            for (int z = 0; z < depth; z++)
+            for (int ly = 0; ly < layerCount; ly++)
             {
-                for (int x = 0; x < width; x++)
-                {
-                    int idx = IndexOf(x, z);
-                    Vector3 point = CellCenter(x, z);
-                    bool pointBlocked = isBlockedPoint != null && isBlockedPoint(point);
-                    blocked[idx] = pointBlocked;
-                    if (pointBlocked) continue;
+                float[][] source = new float[AcousticBands.Count][];
+                for (int b = 0; b < AcousticBands.Count; b++) source[b] = new float[cellCount];
+                float sampleY = layerHeights[ly];
 
-                    float enclosure = EvaluateEnclosureFactor(point, materialBounds);
+                for (int z = 0; z < depth; z++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int idx = IndexOf(x, z);
+                        Vector3 point = CellCenter(x, z, sampleY);
+                        bool pointBlocked = isBlockedPoint != null && isBlockedPoint(point);
+                        blockedPerLayer[ly][idx] = pointBlocked;
+                        if (pointBlocked) continue;
+
+                        float enclosure = EvaluateEnclosureFactor(point, materialBounds);
 
                     for (int s = 0; s < speakers.Count; s++)
                     {
@@ -124,7 +163,7 @@ namespace PhysicalAcousticsSim
 
                         FillTransmissionAmplitudeAlongSegment(speakerPos, point, acousticLayerMask, GetPrimaryCollider(speaker), null, transmissionScratch);
 
-                        for (int b = 0; b < AcousticBands.Count; b++)
+                        for (int b = 0; b < bandCount; b++)
                         {
                             float sourcePhase = 0f;
                             float driveDb = mixer != null ? mixer.GetSpeakerBandEmissionOffsetDb(speaker, b, out sourcePhase) : -speaker.NominalInputLevelDbuForMaxSpl;
@@ -139,57 +178,57 @@ namespace PhysicalAcousticsSim
                         }
                     }
                 }
-            }
 
-            for (int b = 0; b < AcousticBands.Count; b++)
-            {
-                float[] field = new float[cellCount];
-                float[] next = new float[cellCount];
-                Array.Copy(source[b], field, cellCount);
-
-                float bandAbsorption = Mathf.Clamp01(Mathf.Max(minDiffuseAbsorption, averageAbsorption[b]));
-                float bandReflection = Mathf.Clamp01(averageReflection[b]);
-                float freqNorm = b / (float)(AcousticBands.Count - 1);
-                float bandTransport = effectiveTransport * Mathf.Lerp(1.05f, 0.58f, freqNorm);
-                float retain = Mathf.Clamp01(0.975f - effectiveGlobalDamping - (bandAbsorption * 0.14f));
-                float stepAirDb = AcousticBands.AirAbsorptionDbPerMeter(AcousticBands.CenterFrequenciesHz[b], airTemperatureC, humidityPercent) * cellSizeMeters;
-                float stepAirAmp = AcousticBands.DbToAmplitude(-stepAirDb);
-
-                for (int it = 0; it < iterationCount; it++)
+                for (int b = 0; b < bandCount; b++)
                 {
-                    for (int z = 0; z < depth; z++)
+                    float[] field = new float[cellCount];
+                    float[] next = new float[cellCount];
+                    Array.Copy(source[b], field, cellCount);
+
+                    float bandAbsorption = Mathf.Clamp01(Mathf.Max(minDiffuseAbsorption, averageAbsorption[b]));
+                    float bandReflection = Mathf.Clamp01(averageReflection[b]);
+                    float freqNorm = b / (float)(AcousticBands.Count - 1);
+                    float bandTransport = effectiveTransport * Mathf.Lerp(1.05f, 0.58f, freqNorm);
+                    float retain = Mathf.Clamp01(0.975f - effectiveGlobalDamping - (bandAbsorption * 0.14f));
+                    float stepAirDb = AcousticBands.AirAbsorptionDbPerMeter(AcousticBands.CenterFrequenciesHz[b], airTemperatureC, humidityPercent) * effectiveCellSizeMeters;
+                    float stepAirAmp = AcousticBands.DbToAmplitude(-stepAirDb);
+
+                    for (int it = 0; it < effectiveIterationCount; it++)
                     {
-                        for (int x = 0; x < width; x++)
+                        for (int z = 0; z < depth; z++)
                         {
-                            int idx = IndexOf(x, z);
-                            if (blocked[idx])
+                            for (int x = 0; x < width; x++)
                             {
-                                next[idx] = 0f;
-                                continue;
+                                int idx = IndexOf(x, z);
+                                if (blockedPerLayer[ly][idx])
+                                {
+                                    next[idx] = 0f;
+                                    continue;
+                                }
+
+                                float current = field[idx];
+                                float left = SampleNeighbor(field, blockedPerLayer[ly], x - 1, z, current * bandReflection);
+                                float right = SampleNeighbor(field, blockedPerLayer[ly], x + 1, z, current * bandReflection);
+                                float down = SampleNeighbor(field, blockedPerLayer[ly], x, z - 1, current * bandReflection);
+                                float up = SampleNeighbor(field, blockedPerLayer[ly], x, z + 1, current * bandReflection);
+
+                                float neighborMean = 0.25f * (left + right + down + up);
+                                float diffused = current + ((neighborMean - current) * bandTransport);
+                                float damped = diffused * retain * stepAirAmp;
+                                float injected = source[b][idx];
+
+                                next[idx] = Mathf.Max(0f, damped + injected);
                             }
-
-                            float current = field[idx];
-                            float left = SampleNeighbor(field, x - 1, z, current * bandReflection);
-                            float right = SampleNeighbor(field, x + 1, z, current * bandReflection);
-                            float down = SampleNeighbor(field, x, z - 1, current * bandReflection);
-                            float up = SampleNeighbor(field, x, z + 1, current * bandReflection);
-
-                            float neighborMean = 0.25f * (left + right + down + up);
-                            float diffused = current + ((neighborMean - current) * bandTransport);
-                            float damped = diffused * retain * stepAirAmp;
-                            float injected = source[b][idx];
-
-                            next[idx] = Mathf.Max(0f, damped + injected);
                         }
+                        float[] swap = field;
+                        field = next;
+                        next = swap;
                     }
-                    float[] swap = field;
-                    field = next;
-                    next = swap;
-                }
 
-                for (int i = 0; i < cellCount; i++)
-                {
-                    bandFields[b][i] = field[i] * effectiveLateFieldScale;
+                    for (int i = 0; i < cellCount; i++)
+                    {
+                        layeredBandFields[ly][b][i] = field[i] * effectiveLateFieldScale;
+                    }
                 }
             }
 
@@ -201,7 +240,7 @@ namespace PhysicalAcousticsSim
             if (destinationPa == null) return;
             for (int b = 0; b < destinationPa.Length; b++) destinationPa[b] = 0f;
 
-            if (!hasField || bandFields == null || width <= 0 || depth <= 0) return;
+            if (!hasField || layeredBandFields == null || width <= 0 || depth <= 0) return;
 
             float gx = ((point.x - bounds.min.x) / cellSizeMeters) - 0.5f;
             float gz = ((point.z - bounds.min.z) / cellSizeMeters) - 0.5f;
@@ -216,16 +255,47 @@ namespace PhysicalAcousticsSim
             int x1 = Mathf.Clamp(x0 + 1, 0, width - 1);
             int z1 = Mathf.Clamp(z0 + 1, 0, depth - 1);
 
-            for (int b = 0; b < AcousticBands.Count; b++)
-            {
-                float v00 = bandFields[b][IndexOf(x0, z0)];
-                float v10 = bandFields[b][IndexOf(x1, z0)];
-                float v01 = bandFields[b][IndexOf(x0, z1)];
-                float v11 = bandFields[b][IndexOf(x1, z1)];
+            int bandCount = Mathf.Clamp(effectiveBandCount, 1, AcousticBands.Count);
+            int layerCount = layerHeights != null ? layerHeights.Length : 0;
+            if (layerCount <= 0) return;
 
-                float a = Mathf.Lerp(v00, v10, tx);
-                float c = Mathf.Lerp(v01, v11, tx);
-                destinationPa[b] = Mathf.Lerp(a, c, tz);
+            int lowerLayer = 0;
+            int upperLayer = layerCount - 1;
+            float layerT = 0f;
+            if (layerCount > 1)
+            {
+                lowerLayer = 0;
+                while (lowerLayer + 1 < layerCount && layerHeights[lowerLayer + 1] <= point.y)
+                {
+                    lowerLayer++;
+                }
+                upperLayer = Mathf.Min(layerCount - 1, lowerLayer + 1);
+                float h0 = layerHeights[lowerLayer];
+                float h1 = layerHeights[upperLayer];
+                layerT = upperLayer == lowerLayer ? 0f : Mathf.InverseLerp(h0, h1, point.y);
+            }
+
+            for (int b = 0; b < bandCount; b++)
+            {
+                float low00 = layeredBandFields[lowerLayer][b][IndexOf(x0, z0)];
+                float low10 = layeredBandFields[lowerLayer][b][IndexOf(x1, z0)];
+                float low01 = layeredBandFields[lowerLayer][b][IndexOf(x0, z1)];
+                float low11 = layeredBandFields[lowerLayer][b][IndexOf(x1, z1)];
+
+                float high00 = layeredBandFields[upperLayer][b][IndexOf(x0, z0)];
+                float high10 = layeredBandFields[upperLayer][b][IndexOf(x1, z0)];
+                float high01 = layeredBandFields[upperLayer][b][IndexOf(x0, z1)];
+                float high11 = layeredBandFields[upperLayer][b][IndexOf(x1, z1)];
+
+                float lowA = Mathf.Lerp(low00, low10, tx);
+                float lowC = Mathf.Lerp(low01, low11, tx);
+                float lowLayerValue = Mathf.Lerp(lowA, lowC, tz);
+
+                float highA = Mathf.Lerp(high00, high10, tx);
+                float highC = Mathf.Lerp(high01, high11, tx);
+                float highLayerValue = Mathf.Lerp(highA, highC, tz);
+
+                destinationPa[b] = Mathf.Lerp(lowLayerValue, highLayerValue, layerT);
             }
         }
 
@@ -244,7 +314,7 @@ namespace PhysicalAcousticsSim
                 return;
             }
 
-            int validCount = 0;
+            float validArea = 0f;
             for (int b = 0; b < AcousticBands.Count; b++)
             {
                 averageAbsorption[b] = 0f;
@@ -255,15 +325,17 @@ namespace PhysicalAcousticsSim
             {
                 AcousticMaterial material = materials[i];
                 if (material == null) continue;
-                validCount++;
+                Bounds bounds = material.GetBounds();
+                float areaWeight = Mathf.Max(0.01f, 2f * ((bounds.size.x * bounds.size.y) + (bounds.size.y * bounds.size.z) + (bounds.size.x * bounds.size.z)));
+                validArea += areaWeight;
                 for (int b = 0; b < AcousticBands.Count; b++)
                 {
-                    averageAbsorption[b] += material.GetAbsorption(b);
-                    averageReflection[b] += material.GetReflectionAmplitude(b);
+                    averageAbsorption[b] += material.GetAbsorption(b) * areaWeight;
+                    averageReflection[b] += material.GetReflectionAmplitude(b) * areaWeight;
                 }
             }
 
-            if (validCount <= 0)
+            if (validArea <= 0f)
             {
                 for (int b = 0; b < AcousticBands.Count; b++)
                 {
@@ -275,8 +347,8 @@ namespace PhysicalAcousticsSim
 
             for (int b = 0; b < AcousticBands.Count; b++)
             {
-                averageAbsorption[b] = Mathf.Clamp01(averageAbsorption[b] / validCount);
-                averageReflection[b] = Mathf.Clamp01(averageReflection[b] / validCount);
+                averageAbsorption[b] = Mathf.Clamp01(averageAbsorption[b] / validArea);
+                averageReflection[b] = Mathf.Clamp01(averageReflection[b] / validArea);
             }
         }
 
@@ -297,23 +369,55 @@ namespace PhysicalAcousticsSim
             return 1f + (wallProximity * 0.18f);
         }
 
-        private float SampleNeighbor(float[] field, int x, int z, float fallback)
+        private float SampleNeighbor(float[] field, bool[] blockedLayer, int x, int z, float fallback)
         {
             if (x < 0 || x >= width || z < 0 || z >= depth) return fallback;
             int idx = IndexOf(x, z);
-            if (blocked != null && blocked[idx]) return fallback;
+            if (blockedLayer != null && blockedLayer[idx]) return fallback;
             return field[idx];
         }
 
         private int IndexOf(int x, int z) => x + (z * width);
 
-        private Vector3 CellCenter(int x, int z)
+        private Vector3 CellCenter(int x, int z, float layerY)
         {
             return new Vector3(
-                bounds.min.x + ((x + 0.5f) * cellSizeMeters),
-                yPlane,
-                bounds.min.z + ((z + 0.5f) * cellSizeMeters)
+                bounds.min.x + ((x + 0.5f) * effectiveCellSizeMeters),
+                layerY,
+                bounds.min.z + ((z + 0.5f) * effectiveCellSizeMeters)
             );
+        }
+
+        private void RebuildEffectiveSettings()
+        {
+            switch (quality)
+            {
+                case SolverQuality.Fast:
+                    effectiveBandCount = 4;
+                    effectiveCellSizeMeters = Mathf.Max(0.1f, cellSizeMeters * 1.4f);
+                    effectiveIterationCount = Mathf.Max(1, Mathf.RoundToInt(iterationCount * 0.55f));
+                    lateFieldHeightLayers = Mathf.Max(1, Mathf.Min(lateFieldHeightLayers, 2));
+                    break;
+
+                case SolverQuality.Detailed:
+                    effectiveBandCount = AcousticBands.Count;
+                    effectiveCellSizeMeters = Mathf.Max(0.1f, cellSizeMeters * 0.75f);
+                    effectiveIterationCount = Mathf.Max(1, Mathf.RoundToInt(iterationCount * 1.45f));
+                    lateFieldHeightLayers = Mathf.Max(3, lateFieldHeightLayers);
+                    break;
+
+                default:
+                    effectiveBandCount = 6;
+                    effectiveCellSizeMeters = Mathf.Max(0.1f, cellSizeMeters);
+                    effectiveIterationCount = Mathf.Max(1, iterationCount);
+                    lateFieldHeightLayers = Mathf.Max(2, lateFieldHeightLayers);
+                    break;
+            }
+
+            effectiveTransport = Mathf.Min(transport, 0.16f);
+            effectiveSourceCoupling = Mathf.Min(sourceCoupling, 0.025f);
+            effectiveLateFieldScale = Mathf.Min(lateFieldScale, 0.20f);
+            effectiveGlobalDamping = Mathf.Max(globalDamping, 0.05f);
         }
 
         private void FillTransmissionAmplitudeAlongSegment(Vector3 a, Vector3 b, LayerMask acousticLayerMask, Collider ignoreA, Collider ignoreB, float[] transmissionOut)
