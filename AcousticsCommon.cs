@@ -40,7 +40,12 @@ namespace PhysicalAcousticsSim
 		Foam,
 		Carpet,
 		Plaster,
-		Curtain
+		Curtain,
+		Latex,
+		Mylar,
+		PvcFabric,
+		ReinforcedPvc,
+		OxfordPu
 	}
 
 	public enum WireSignalType
