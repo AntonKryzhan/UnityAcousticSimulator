@@ -177,10 +177,11 @@ namespace PhysicalAcousticsSim
                             source[b][idx] += injected;
                         }
                     }
-                }
+	                    }
+	                }
 
-                for (int b = 0; b < bandCount; b++)
-                {
+	                for (int b = 0; b < bandCount; b++)
+	                {
                     float[] field = new float[cellCount];
                     float[] next = new float[cellCount];
                     Array.Copy(source[b], field, cellCount);
