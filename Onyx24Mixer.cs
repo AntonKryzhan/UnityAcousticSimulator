@@ -12,12 +12,18 @@ namespace PhysicalAcousticsSim
 		public AcousticMicrophone microphoneInput;
 		public AcousticSignalWire inputWire;
 		public bool phantomPower = true;
+		public bool hiZ = false;
 		public bool muted = false;
+		public bool solo = false;
 		public bool polarityInvert = false;
 		public float preampGainDb = 28f;
 		public float trimDb = 0f;
+		public bool lowCutEnabled = true;
 		public float hpfHz = 70f;
 		public float lpfHz = 18000f;
+		public bool eqEnabled = true;
+		public float pan = 0f;
+		public bool lr = true;
 		public float faderDb = 0f;
 		public string assignedBus = "MAIN";
 		public float[] eqBandGainDb = new float[AcousticBands.Count];
@@ -88,6 +94,8 @@ namespace PhysicalAcousticsSim
 				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
 				channels[i].hpfHz = Mathf.Max(10f, channels[i].hpfHz);
 				channels[i].lpfHz = Mathf.Max(channels[i].hpfHz + 10f, channels[i].lpfHz);
+				channels[i].faderDb = Mathf.Clamp(channels[i].faderDb, -60f, 10f);
+				channels[i].pan = Mathf.Clamp(channels[i].pan, -1f, 1f);
 			}
 		}
 
@@ -278,8 +286,16 @@ namespace PhysicalAcousticsSim
 			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			float gainDb = channel.preampGainDb + channel.trimDb + channel.faderDb + output.levelDb + output.outputTrimDb;
 			gainDb += masterFaderDb + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
-			gainDb += channel.eqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
-			gainDb += AcousticBands.AmplitudeToDb(AcousticBands.HPFWeight(Mathf.Max(10f, channel.hpfHz), f));
+			if (channel.eqEnabled)
+			{
+				gainDb += channel.eqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
+			}
+
+			if (channel.lowCutEnabled)
+			{
+				gainDb += AcousticBands.AmplitudeToDb(AcousticBands.HPFWeight(Mathf.Max(10f, channel.hpfHz), f));
+			}
+
 			gainDb += AcousticBands.AmplitudeToDb(AcousticBands.LPFWeight(Mathf.Max(channel.hpfHz + 10f, channel.lpfHz), f));
 
 			if (channel.polarityInvert)
