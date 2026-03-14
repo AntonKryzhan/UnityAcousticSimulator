@@ -8,6 +8,7 @@ namespace PhysicalAcousticsSim
 	public sealed class MixerInputChannel
 	{
 		public string channelName = "CH";
+		public bool stereo = false;
 		public bool enabled = true;
 		public AcousticMicrophone microphoneInput;
 		public AcousticSignalWire inputWire;
@@ -151,11 +152,18 @@ namespace PhysicalAcousticsSim
 
 			EnsureOutputBus("MAIN L");
 			EnsureOutputBus("MAIN R");
-			EnsureOutputBus("MAIN");
 			EnsureOutputBus("CONTROL ROOM");
 			EnsureOutputBus("PHONES");
 			EnsureOutputBus("MON1");
 			EnsureOutputBus("MON2");
+
+			for (int i = outputs.Count - 1; i >= 0; i--)
+			{
+				if (string.Equals(outputs[i].busName, "MAIN", StringComparison.OrdinalIgnoreCase))
+				{
+					outputs.RemoveAt(i);
+				}
+			}
 		}
 
 		private static string GetDefaultChannelName(int index)
@@ -250,12 +258,35 @@ namespace PhysicalAcousticsSim
 				return true;
 			}
 
-			return IsMainBus(channel.assignedBus) && IsMainBus(busName);
+			if (IsMainLeftBus(busName))
+			{
+				return string.Equals(channel.assignedBus, "MAIN", StringComparison.OrdinalIgnoreCase)
+					|| IsMainLeftBus(channel.assignedBus);
+			}
+
+			if (IsMainRightBus(busName))
+			{
+				return string.Equals(channel.assignedBus, "MAIN", StringComparison.OrdinalIgnoreCase)
+					|| IsMainRightBus(channel.assignedBus);
+			}
+
+			return false;
 		}
 
 		private static bool IsStereoChannel(MixerInputChannel channel)
 		{
-			return channel != null && !string.IsNullOrWhiteSpace(channel.channelName) && channel.channelName.Contains("/");
+			if (channel == null)
+			{
+				return false;
+			}
+
+			if (channel.stereo)
+			{
+				return true;
+			}
+
+			return channel.stereoRightInput != null
+				|| (!string.IsNullOrWhiteSpace(channel.channelName) && channel.channelName.Contains("/"));
 		}
 
 		private int GetChannelInputSlot(MixerInputChannel channel, bool rightSide)
@@ -294,7 +325,12 @@ namespace PhysicalAcousticsSim
 			}
 
 			int slot = GetChannelInputSlot(channel, rightSide);
-			if (slot < 0 || slot >= jackInputs || slot >= microphoneInputs || slot >= xlrInputs)
+			if (slot < 0)
+			{
+				return false;
+			}
+
+			if (slot >= jackInputs && slot >= microphoneInputs && slot >= xlrInputs)
 			{
 				return false;
 			}
@@ -401,6 +437,35 @@ namespace PhysicalAcousticsSim
 
 			float t = Mathf.Clamp01((Mathf.Clamp(pan, -1f, 1f) + 1f) * 0.5f);
 			float amp = isLeft ? Mathf.Cos(t * Mathf.PI * 0.5f) : Mathf.Sin(t * Mathf.PI * 0.5f);
+			return AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, amp));
+		}
+
+		private static float GetStereoBalanceGainDb(float balance, bool isStereoRightInput, string busName)
+		{
+			if (!IsMainBus(busName))
+			{
+				return 0f;
+			}
+
+			bool outL = IsMainLeftBus(busName);
+			bool outR = IsMainRightBus(busName);
+			if (!outL && !outR)
+			{
+				return 0f;
+			}
+
+			if (isStereoRightInput && !outR)
+			{
+				return -120f;
+			}
+
+			if (!isStereoRightInput && !outL)
+			{
+				return -120f;
+			}
+
+			float b = Mathf.Clamp(balance, -1f, 1f);
+			float amp = isStereoRightInput ? (1f - Mathf.Max(0f, -b)) : (1f - Mathf.Max(0f, b));
 			return AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, amp));
 		}
 
@@ -532,18 +597,13 @@ namespace PhysicalAcousticsSim
 			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			float gainDb = channel.preampGainDb + channel.trimDb + channel.faderDb + output.levelDb + output.outputTrimDb;
 			gainDb += masterFaderDb + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
-			gainDb += GetPanGainDb(channel.pan, output.busName);
 			if (IsStereoChannel(channel) && IsMainBus(output.busName))
 			{
-				float balance = Mathf.Clamp(channel.pan, -1f, 1f);
-				if (isStereoRightInput)
-				{
-					gainDb += AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, Mathf.Clamp01(1f - Mathf.Max(0f, -balance))));
-				}
-				else
-				{
-					gainDb += AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, Mathf.Clamp01(1f - Mathf.Max(0f, balance))));
-				}
+				gainDb += GetStereoBalanceGainDb(channel.pan, isStereoRightInput, output.busName);
+			}
+			else
+			{
+				gainDb += GetPanGainDb(channel.pan, output.busName);
 			}
 			if (channel.eqEnabled)
 			{
