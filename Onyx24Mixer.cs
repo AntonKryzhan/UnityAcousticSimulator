@@ -26,6 +26,7 @@ namespace PhysicalAcousticsSim
 		public bool lr = true;
 		public float faderDb = 0f;
 		public string assignedBus = "MAIN";
+		public AcousticMicrophone stereoRightInput;
 		public float[] eqBandGainDb = new float[AcousticBands.Count];
 	}
 
@@ -148,6 +149,8 @@ namespace PhysicalAcousticsSim
 				}
 			}
 
+			EnsureOutputBus("MAIN L");
+			EnsureOutputBus("MAIN R");
 			EnsureOutputBus("MAIN");
 			EnsureOutputBus("CONTROL ROOM");
 			EnsureOutputBus("PHONES");
@@ -193,13 +196,192 @@ namespace PhysicalAcousticsSim
 					continue;
 				}
 
-				if (string.Equals(ch.assignedBus, busName, StringComparison.OrdinalIgnoreCase))
+				if (IsAssignedToBus(ch, busName))
 				{
 					return true;
 				}
 			}
 
 			return false;
+		}
+
+		private static bool IsMainLeftBus(string busName)
+		{
+			if (string.IsNullOrWhiteSpace(busName))
+			{
+				return false;
+			}
+
+			string upperBus = busName.Trim().ToUpperInvariant();
+			return upperBus == "MAIN L" || upperBus.EndsWith("/L", StringComparison.Ordinal) || upperBus.EndsWith(" L", StringComparison.Ordinal);
+		}
+
+		private static bool IsMainRightBus(string busName)
+		{
+			if (string.IsNullOrWhiteSpace(busName))
+			{
+				return false;
+			}
+
+			string upperBus = busName.Trim().ToUpperInvariant();
+			return upperBus == "MAIN R" || upperBus.EndsWith("/R", StringComparison.Ordinal) || upperBus.EndsWith(" R", StringComparison.Ordinal);
+		}
+
+		private static bool IsMainBus(string busName)
+		{
+			if (string.IsNullOrWhiteSpace(busName))
+			{
+				return false;
+			}
+
+			string upperBus = busName.Trim().ToUpperInvariant();
+			return upperBus == "MAIN" || IsMainLeftBus(upperBus) || IsMainRightBus(upperBus);
+		}
+
+		private static bool IsAssignedToBus(MixerInputChannel channel, string busName)
+		{
+			if (channel == null)
+			{
+				return false;
+			}
+
+			if (string.Equals(channel.assignedBus, busName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			return IsMainBus(channel.assignedBus) && IsMainBus(busName);
+		}
+
+		private static bool IsStereoChannel(MixerInputChannel channel)
+		{
+			return channel != null && !string.IsNullOrWhiteSpace(channel.channelName) && channel.channelName.Contains("/");
+		}
+
+		private int GetChannelInputSlot(MixerInputChannel channel, bool rightSide)
+		{
+			if (channels == null || channel == null)
+			{
+				return -1;
+			}
+
+			int slot = 0;
+			for (int i = 0; i < channels.Count; i++)
+			{
+				MixerInputChannel c = channels[i];
+				bool stereo = IsStereoChannel(c);
+				if (c == channel)
+				{
+					return slot + ((stereo && rightSide) ? 1 : 0);
+				}
+
+				slot += stereo ? 2 : 1;
+			}
+
+			return -1;
+		}
+
+		private bool IsChannelInputPhysicallyAvailable(MixerInputChannel channel, bool rightSide)
+		{
+			if (channel == null)
+			{
+				return false;
+			}
+
+			if (rightSide && !IsStereoChannel(channel))
+			{
+				return false;
+			}
+
+			int slot = GetChannelInputSlot(channel, rightSide);
+			if (slot < 0 || slot >= jackInputs || slot >= microphoneInputs || slot >= xlrInputs)
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		private int GetDeclaredXlrOutputCount()
+		{
+			if (string.IsNullOrWhiteSpace(xlrOutputs))
+			{
+				return 0;
+			}
+
+			int i = 0;
+			while (i < xlrOutputs.Length && char.IsDigit(xlrOutputs[i]))
+			{
+				i++;
+			}
+
+			if (i == 0)
+			{
+				return 0;
+			}
+
+			if (int.TryParse(xlrOutputs.Substring(0, i), out int count))
+			{
+				return Mathf.Max(0, count);
+			}
+
+			return 0;
+		}
+
+		private bool IsOutputPhysicallyAvailable(MixerBusOutput output)
+		{
+			if (output == null || outputs == null)
+			{
+				return false;
+			}
+
+			int index = outputs.IndexOf(output);
+			if (index < 0 || index >= jackOutputs)
+			{
+				return false;
+			}
+
+			if ((IsMainLeftBus(output.busName) || IsMainRightBus(output.busName)) && GetDeclaredXlrOutputCount() < 2)
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		private static bool IsMicRoutedToChannel(AcousticMicrophone microphone, MixerInputChannel channel, out bool isRightSide)
+		{
+			isRightSide = false;
+			if (channel == null || microphone == null)
+			{
+				return false;
+			}
+
+			if (channel.microphoneInput == microphone)
+			{
+				return true;
+			}
+
+			if (IsStereoChannel(channel) && channel.stereoRightInput == microphone)
+			{
+				isRightSide = true;
+				return true;
+			}
+
+			return false;
+		}
+
+		private static float GetInputLoadDb(MixerInputChannel channel, AcousticMicrophone microphone)
+		{
+			if (channel == null || microphone == null || microphone.OutputImpedanceOhm <= 0f)
+			{
+				return 0f;
+			}
+
+			float loadOhm = channel.hiZ ? 1000000f : 2400f;
+			float vin = loadOhm / (loadOhm + microphone.OutputImpedanceOhm);
+			float vref = 2400f / (2400f + microphone.OutputImpedanceOhm);
+			return AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, vin / Mathf.Max(0.0001f, vref)));
 		}
 
 		private static float GetPanGainDb(float pan, string busName)
@@ -209,9 +391,8 @@ namespace PhysicalAcousticsSim
 				return 0f;
 			}
 
-			string upperBus = busName.Trim().ToUpperInvariant();
-			bool isLeft = upperBus == "MAIN L" || upperBus.EndsWith("/L", StringComparison.Ordinal) || upperBus.EndsWith(" L", StringComparison.Ordinal);
-			bool isRight = upperBus == "MAIN R" || upperBus.EndsWith("/R", StringComparison.Ordinal) || upperBus.EndsWith(" R", StringComparison.Ordinal);
+			bool isLeft = IsMainLeftBus(busName);
+			bool isRight = IsMainRightBus(busName);
  
 			if (!isLeft && !isRight)
 			{
@@ -232,7 +413,7 @@ namespace PhysicalAcousticsSim
 
 			for (int i = 0; i < channels.Count; i++)
 			{
-				if (channels[i].microphoneInput == microphone)
+				if (IsMicRoutedToChannel(microphone, channels[i], out _))
 				{
 					return channels[i];
 				}
@@ -307,7 +488,18 @@ namespace PhysicalAcousticsSim
 
 			MixerInputChannel channel = GetChannelForMic(microphone);
 			MixerBusOutput output = GetOutputForSpeaker(speaker);
+			bool isStereoRightInput = false;
 			if (channel == null || output == null)
+			{
+				return 0f;
+			}
+
+			if (!IsMicRoutedToChannel(microphone, channel, out isStereoRightInput))
+			{
+				return 0f;
+			}
+
+			if (!IsChannelInputPhysicallyAvailable(channel, isStereoRightInput) || !IsOutputPhysicallyAvailable(output))
 			{
 				return 0f;
 			}
@@ -317,7 +509,7 @@ namespace PhysicalAcousticsSim
 				return 0f;
 			}
 
-			if (!string.Equals(channel.assignedBus, output.busName, StringComparison.OrdinalIgnoreCase))
+			if (!IsAssignedToBus(channel, output.busName))
 			{
 				return 0f;
 			}
@@ -332,7 +524,7 @@ namespace PhysicalAcousticsSim
 				return 0f;
 			}
 
-			if (!channel.lr && string.Equals(output.busName, "MAIN", StringComparison.OrdinalIgnoreCase))
+			if (!channel.lr && IsMainBus(output.busName))
 			{
 				return 0f;
 			}
@@ -341,6 +533,18 @@ namespace PhysicalAcousticsSim
 			float gainDb = channel.preampGainDb + channel.trimDb + channel.faderDb + output.levelDb + output.outputTrimDb;
 			gainDb += masterFaderDb + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			gainDb += GetPanGainDb(channel.pan, output.busName);
+			if (IsStereoChannel(channel) && IsMainBus(output.busName))
+			{
+				float balance = Mathf.Clamp(channel.pan, -1f, 1f);
+				if (isStereoRightInput)
+				{
+					gainDb += AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, Mathf.Clamp01(1f - Mathf.Max(0f, -balance))));
+				}
+				else
+				{
+					gainDb += AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, Mathf.Clamp01(1f - Mathf.Max(0f, balance))));
+				}
+			}
 			if (channel.eqEnabled)
 			{
 				gainDb += channel.eqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
@@ -364,6 +568,8 @@ namespace PhysicalAcousticsSim
 			}
 
 			chainPhaseRad += 2f * Mathf.PI * f * (internalLatencyMs * 0.001f);
+
+			gainDb += GetInputLoadDb(channel, microphone);
 
 			if (channel.inputWire != null)
 			{
