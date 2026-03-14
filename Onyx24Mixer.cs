@@ -12,12 +12,18 @@ namespace PhysicalAcousticsSim
 		public AcousticMicrophone microphoneInput;
 		public AcousticSignalWire inputWire;
 		public bool phantomPower = true;
+		public bool hiZ = false;
 		public bool muted = false;
+		public bool solo = false;
 		public bool polarityInvert = false;
-		public float preampGainDb = 28f;
+		public float preampGainDb = 0f;
 		public float trimDb = 0f;
-		public float hpfHz = 70f;
+		public bool lowCutEnabled = true;
+		public float hpfHz = 100f;
 		public float lpfHz = 18000f;
+		public bool eqEnabled = true;
+		public float pan = 0f;
+		public bool lr = true;
 		public float faderDb = 0f;
 		public string assignedBus = "MAIN";
 		public float[] eqBandGainDb = new float[AcousticBands.Count];
@@ -49,16 +55,15 @@ namespace PhysicalAcousticsSim
 		[SerializeField] private string mixerModel = "Mackie ONYX24";
 		[SerializeField] private string mixingType = "Analog";
 		[SerializeField] private int totalChannels = 19;
-		[SerializeField] private int microphoneInputs = 18;
+		[SerializeField] private int microphoneInputs = 22;
 		[SerializeField] private int stereoInputs = 5;
-		[SerializeField] private int xlrInputs = 18;
+		[SerializeField] private int xlrInputs = 22;
 		[SerializeField] private int jackInputs = 24;
-		[SerializeField] private string xlrOutputs = "Stereo";
-		[SerializeField] private int monitorOutputs = 0;
-		[SerializeField] private int jackOutputs = 3;
+		[SerializeField] private string xlrOutputs = "2 (MAIN L/R)";
+		[SerializeField] private int monitorOutputs = 2;
+		[SerializeField] private int jackOutputs = 7;
 		[SerializeField] private bool usbInterface = true;
 		[SerializeField] private bool phantomPowerAvailable = true;
-		[SerializeField] private bool fxProcessor = false;
 
 		[Header("Simulation")]
 		[SerializeField] private float simulationReferenceInputDbu = 0f;
@@ -88,6 +93,8 @@ namespace PhysicalAcousticsSim
 				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
 				channels[i].hpfHz = Mathf.Max(10f, channels[i].hpfHz);
 				channels[i].lpfHz = Mathf.Max(channels[i].hpfHz + 10f, channels[i].lpfHz);
+				channels[i].faderDb = Mathf.Clamp(channels[i].faderDb, -60f, 10f);
+				channels[i].pan = Mathf.Clamp(channels[i].pan, -1f, 1f);
 			}
 		}
 
@@ -135,9 +142,7 @@ namespace PhysicalAcousticsSim
 			for (int i = outputs.Count - 1; i >= 0; i--)
 			{
 				string bus = outputs[i].busName;
-				if (string.Equals(bus, "FX", StringComparison.OrdinalIgnoreCase) ||
-					string.Equals(bus, "MON1", StringComparison.OrdinalIgnoreCase) ||
-					string.Equals(bus, "MON2", StringComparison.OrdinalIgnoreCase))
+				if (string.Equals(bus, "FX", StringComparison.OrdinalIgnoreCase))
 				{
 					outputs.RemoveAt(i);
 				}
@@ -146,6 +151,8 @@ namespace PhysicalAcousticsSim
 			EnsureOutputBus("MAIN");
 			EnsureOutputBus("CONTROL ROOM");
 			EnsureOutputBus("PHONES");
+			EnsureOutputBus("MON1");
+			EnsureOutputBus("MON2");
 		}
 
 		private static string GetDefaultChannelName(int index)
@@ -278,8 +285,16 @@ namespace PhysicalAcousticsSim
 			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			float gainDb = channel.preampGainDb + channel.trimDb + channel.faderDb + output.levelDb + output.outputTrimDb;
 			gainDb += masterFaderDb + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
-			gainDb += channel.eqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
-			gainDb += AcousticBands.AmplitudeToDb(AcousticBands.HPFWeight(Mathf.Max(10f, channel.hpfHz), f));
+			if (channel.eqEnabled)
+			{
+				gainDb += channel.eqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
+			}
+
+			if (channel.lowCutEnabled)
+			{
+				gainDb += AcousticBands.AmplitudeToDb(AcousticBands.HPFWeight(Mathf.Max(10f, channel.hpfHz), f));
+			}
+
 			gainDb += AcousticBands.AmplitudeToDb(AcousticBands.LPFWeight(Mathf.Max(channel.hpfHz + 10f, channel.lpfHz), f));
 
 			if (channel.polarityInvert)
