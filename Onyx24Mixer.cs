@@ -27,7 +27,11 @@ namespace PhysicalAcousticsSim
 		public float faderDb = 0f;
 		public string assignedBus = "MAIN";
 		public AcousticMicrophone stereoRightInput;
-		public float[] eqBandGainDb = new float[AcousticBands.Count];
+		public float eqHighGainDb = 0f;
+		public float eqMidGainDb = 0f;
+		public float eqMidFrequencyHz = 2500f;
+		public float eqLowGainDb = 0f;
+		[HideInInspector] public float[] eqBandGainDb = new float[AcousticBands.Count];
 	}
 
 	[Serializable]
@@ -52,6 +56,15 @@ namespace PhysicalAcousticsSim
 		public const float PhysicalFaderMaxDb = 10f;
 		public const float PhysicalPreampMinDb = -20f;
 		public const float PhysicalPreampMaxDb = 40f;
+		public const float ChannelEqGainMinDb = -15f;
+		public const float ChannelEqGainMaxDb = 15f;
+		public const float ChannelEqMidFreqMinHz = 100f;
+		public const float ChannelEqMidFreqMaxHz = 8000f;
+
+		private const float SimulatedLowShelfHz = 80f;
+		private const float SimulatedHighShelfHz = 12000f;
+		private const float SimulatedHighShelfReferenceHz = 6000f;
+		private const float MidBellWidthOctaves = 0.85f;
 
 		private static readonly string[] DefaultChannelLayout =
 		{
@@ -73,6 +86,10 @@ namespace PhysicalAcousticsSim
 		[SerializeField] private bool usbInterface = true;
 		[SerializeField] private bool phantomPowerAvailable = true;
 
+		[Header("Presets")]
+		[SerializeField] private Onyx24MixerPreset presetAsset;
+		[SerializeField] private string presetName = "New Preset";
+
 		[Header("Simulation")]
 		[SerializeField] private float simulationReferenceInputDbu = 0f;
 		[SerializeField] private float internalLatencyMs = 0.65f;
@@ -82,6 +99,8 @@ namespace PhysicalAcousticsSim
 		[SerializeField] private List<MixerBusOutput> outputs = new List<MixerBusOutput>();
 
 		public string MixerModel => mixerModel;
+		public Onyx24MixerPreset PresetAsset => presetAsset;
+		public string PresetName => presetName;
 		public List<MixerInputChannel> Channels => channels;
 		public List<MixerBusOutput> Outputs => outputs;
 
@@ -92,6 +111,7 @@ namespace PhysicalAcousticsSim
 
 		private void OnValidate()
 		{
+			presetName = NormalizePresetName(presetName);
 			AcousticBands.EnsureArray(ref masterEqBandGainDb, 0f);
 			internalLatencyMs = Mathf.Max(0f, internalLatencyMs);
 			masterFaderDb = ClampPhysicalFaderDb(masterFaderDb);
@@ -105,6 +125,7 @@ namespace PhysicalAcousticsSim
 				channels[i].preampGainDb = ClampPhysicalPreampGainDb(channels[i].preampGainDb);
 				channels[i].faderDb = ClampPhysicalFaderDb(channels[i].faderDb);
 				channels[i].pan = Mathf.Clamp(channels[i].pan, -1f, 1f);
+				UpdateChannelEqBands(channels[i]);
 			}
 
 			for (int i = 0; i < outputs.Count; i++)
@@ -134,6 +155,161 @@ namespace PhysicalAcousticsSim
 			return Mathf.Clamp(valueDb, PhysicalPreampMinDb, PhysicalPreampMaxDb);
 		}
 
+		public static float ClampChannelEqGainDb(float valueDb)
+		{
+			return Mathf.Clamp(valueDb, ChannelEqGainMinDb, ChannelEqGainMaxDb);
+		}
+
+		public static float ClampChannelEqMidFrequencyHz(float valueHz)
+		{
+			return Mathf.Clamp(valueHz, ChannelEqMidFreqMinHz, ChannelEqMidFreqMaxHz);
+		}
+
+		public void SaveToPreset(Onyx24MixerPreset targetPreset)
+		{
+			if (targetPreset == null)
+			{
+				return;
+			}
+
+			targetPreset.EnsureData();
+			targetPreset.PresetName = NormalizePresetName(presetName);
+			targetPreset.MixerModel = mixerModel;
+			targetPreset.MasterFaderDb = ClampPhysicalFaderDb(masterFaderDb);
+			AcousticBands.EnsureArray(ref masterEqBandGainDb, 0f);
+			AcousticBands.Copy(masterEqBandGainDb, targetPreset.MasterEqBandGainDb);
+
+			targetPreset.Channels.Clear();
+			for (int i = 0; i < channels.Count; i++)
+			{
+				MixerInputChannel channel = channels[i];
+				UpdateChannelEqBands(channel);
+
+				targetPreset.Channels.Add(new MixerInputChannelPresetData
+				{
+					channelName = channel.channelName,
+					enabled = channel.enabled,
+					phantomPower = channel.phantomPower,
+					hiZ = channel.hiZ,
+					muted = channel.muted,
+					solo = channel.solo,
+					polarityInvert = channel.polarityInvert,
+					preampGainDb = ClampPhysicalPreampGainDb(channel.preampGainDb),
+					trimDb = channel.trimDb,
+					lowCutEnabled = channel.lowCutEnabled,
+					hpfHz = Mathf.Max(10f, channel.hpfHz),
+					lpfHz = Mathf.Max(channel.hpfHz + 10f, channel.lpfHz),
+					eqEnabled = channel.eqEnabled,
+					pan = Mathf.Clamp(channel.pan, -1f, 1f),
+					lr = channel.lr,
+					faderDb = ClampPhysicalFaderDb(channel.faderDb),
+					assignedBus = channel.assignedBus,
+					eqHighGainDb = ClampChannelEqGainDb(channel.eqHighGainDb),
+					eqMidGainDb = ClampChannelEqGainDb(channel.eqMidGainDb),
+					eqMidFrequencyHz = ClampChannelEqMidFrequencyHz(channel.eqMidFrequencyHz),
+					eqLowGainDb = ClampChannelEqGainDb(channel.eqLowGainDb)
+				});
+			}
+
+			targetPreset.Outputs.Clear();
+			for (int i = 0; i < outputs.Count; i++)
+			{
+				MixerBusOutput output = outputs[i];
+				targetPreset.Outputs.Add(new MixerBusOutputPresetData
+				{
+					busName = output.busName,
+					enabled = output.enabled,
+					muted = output.muted,
+					polarityInvert = output.polarityInvert,
+					levelDb = ClampPhysicalFaderDb(output.levelDb),
+					outputTrimDb = output.outputTrimDb
+				});
+			}
+
+			presetAsset = targetPreset;
+			presetName = targetPreset.PresetName;
+		}
+
+		public void LoadFromPreset(Onyx24MixerPreset sourcePreset)
+		{
+			if (sourcePreset == null)
+			{
+				return;
+			}
+
+			sourcePreset.EnsureData();
+			presetAsset = sourcePreset;
+			presetName = NormalizePresetName(sourcePreset.PresetName);
+
+			masterFaderDb = ClampPhysicalFaderDb(sourcePreset.MasterFaderDb);
+			AcousticBands.EnsureArray(ref masterEqBandGainDb, 0f);
+			AcousticBands.Copy(sourcePreset.MasterEqBandGainDb, masterEqBandGainDb);
+
+			if (sourcePreset.Channels.Count > 0)
+			{
+				totalChannels = sourcePreset.Channels.Count;
+			}
+
+			EnsureDefaultLayout();
+
+			int channelCount = Mathf.Min(channels.Count, sourcePreset.Channels.Count);
+			for (int i = 0; i < channelCount; i++)
+			{
+				MixerInputChannel channel = channels[i];
+				MixerInputChannelPresetData presetChannel = sourcePreset.Channels[i];
+
+				channel.channelName = presetChannel.channelName;
+				channel.enabled = presetChannel.enabled;
+				channel.phantomPower = presetChannel.phantomPower;
+				channel.hiZ = presetChannel.hiZ;
+				channel.muted = presetChannel.muted;
+				channel.solo = presetChannel.solo;
+				channel.polarityInvert = presetChannel.polarityInvert;
+				channel.preampGainDb = ClampPhysicalPreampGainDb(presetChannel.preampGainDb);
+				channel.trimDb = presetChannel.trimDb;
+				channel.lowCutEnabled = presetChannel.lowCutEnabled;
+				channel.hpfHz = Mathf.Max(10f, presetChannel.hpfHz);
+				channel.lpfHz = Mathf.Max(channel.hpfHz + 10f, presetChannel.lpfHz);
+				channel.eqEnabled = presetChannel.eqEnabled;
+				channel.pan = Mathf.Clamp(presetChannel.pan, -1f, 1f);
+				channel.lr = presetChannel.lr;
+				channel.faderDb = ClampPhysicalFaderDb(presetChannel.faderDb);
+				channel.assignedBus = presetChannel.assignedBus;
+				channel.eqHighGainDb = ClampChannelEqGainDb(presetChannel.eqHighGainDb);
+				channel.eqMidGainDb = ClampChannelEqGainDb(presetChannel.eqMidGainDb);
+				channel.eqMidFrequencyHz = ClampChannelEqMidFrequencyHz(presetChannel.eqMidFrequencyHz);
+				channel.eqLowGainDb = ClampChannelEqGainDb(presetChannel.eqLowGainDb);
+				UpdateChannelEqBands(channel);
+			}
+
+			for (int i = 0; i < sourcePreset.Outputs.Count; i++)
+			{
+				MixerBusOutputPresetData presetOutput = sourcePreset.Outputs[i];
+				if (string.IsNullOrWhiteSpace(presetOutput.busName))
+				{
+					continue;
+				}
+
+				EnsureOutputBus(presetOutput.busName);
+				MixerBusOutput output = GetOutputByBusName(presetOutput.busName);
+				if (output == null)
+				{
+					continue;
+				}
+
+				output.enabled = presetOutput.enabled;
+				output.muted = presetOutput.muted;
+				output.polarityInvert = presetOutput.polarityInvert;
+				output.levelDb = ClampPhysicalFaderDb(presetOutput.levelDb);
+				output.outputTrimDb = presetOutput.outputTrimDb;
+			}
+		}
+
+		private static string NormalizePresetName(string value)
+		{
+			return string.IsNullOrWhiteSpace(value) ? "New Preset" : value.Trim();
+		}
+
 		[ContextMenu("Ensure Default Layout")]
 		public void EnsureDefaultLayout()
 		{
@@ -158,6 +334,7 @@ namespace PhysicalAcousticsSim
 				ch.channelName = GetDefaultChannelName(channels.Count);
 				AcousticBands.EnsureArray(ref ch.eqBandGainDb, 0f);
 				ch.faderDb = PhysicalFaderUnityDb;
+				UpdateChannelEqBands(ch);
 				channels.Add(ch);
 			}
 
@@ -176,6 +353,7 @@ namespace PhysicalAcousticsSim
 				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
 				channels[i].preampGainDb = ClampPhysicalPreampGainDb(channels[i].preampGainDb);
 				channels[i].faderDb = ClampPhysicalFaderDb(channels[i].faderDb);
+				UpdateChannelEqBands(channels[i]);
 			}
 
 			for (int i = outputs.Count - 1; i >= 0; i--)
@@ -199,6 +377,55 @@ namespace PhysicalAcousticsSim
 			{
 				outputs[i].levelDb = ClampPhysicalFaderDb(outputs[i].levelDb);
 			}
+		}
+
+		private static void UpdateChannelEqBands(MixerInputChannel channel)
+		{
+			if (channel == null)
+			{
+				return;
+			}
+
+			channel.eqHighGainDb = ClampChannelEqGainDb(channel.eqHighGainDb);
+			channel.eqMidGainDb = ClampChannelEqGainDb(channel.eqMidGainDb);
+			channel.eqLowGainDb = ClampChannelEqGainDb(channel.eqLowGainDb);
+			channel.eqMidFrequencyHz = ClampChannelEqMidFrequencyHz(channel.eqMidFrequencyHz);
+
+			AcousticBands.EnsureArray(ref channel.eqBandGainDb, 0f);
+			AcousticBands.SetAll(channel.eqBandGainDb, 0f);
+
+			for (int i = 0; i < AcousticBands.Count; i++)
+			{
+				float centerHz = AcousticBands.CenterFrequenciesHz[i];
+				float lowWeight = GetLowShelfWeight(centerHz, SimulatedLowShelfHz);
+				float midWeight = GetBellWeight(centerHz, channel.eqMidFrequencyHz, MidBellWidthOctaves);
+				float highWeight = GetHighShelfWeight(centerHz, SimulatedHighShelfHz);
+
+				channel.eqBandGainDb[i] =
+					channel.eqLowGainDb * lowWeight +
+					channel.eqMidGainDb * midWeight +
+					channel.eqHighGainDb * highWeight;
+			}
+		}
+
+		private static float GetLowShelfWeight(float bandCenterHz, float shelfHz)
+		{
+			float octaves = Mathf.Log(Mathf.Max(1f, bandCenterHz) / Mathf.Max(1f, shelfHz), 2f);
+			return 1f / (1f + Mathf.Exp(2.2f * octaves));
+		}
+
+		private static float GetHighShelfWeight(float bandCenterHz, float shelfHz)
+		{
+			float effectiveShelfHz = Mathf.Min(shelfHz, SimulatedHighShelfReferenceHz);
+			float octaves = Mathf.Log(Mathf.Max(1f, bandCenterHz) / Mathf.Max(1f, effectiveShelfHz), 2f);
+			return 1f / (1f + Mathf.Exp(-2.2f * octaves));
+		}
+
+		private static float GetBellWeight(float bandCenterHz, float centerHz, float widthOctaves)
+		{
+			float octaves = Mathf.Log(Mathf.Max(1f, bandCenterHz) / Mathf.Max(1f, centerHz), 2f);
+			float sigma = Mathf.Max(0.01f, widthOctaves);
+			return Mathf.Exp(-(octaves * octaves) / (2f * sigma * sigma));
 		}
 
 		private static string GetDefaultChannelName(int index)
@@ -226,6 +453,24 @@ namespace PhysicalAcousticsSim
 				busName = busName,
 				levelDb = PhysicalFaderUnityDb
 			});
+		}
+
+		private MixerBusOutput GetOutputByBusName(string busName)
+		{
+			if (outputs == null || string.IsNullOrWhiteSpace(busName))
+			{
+				return null;
+			}
+
+			for (int i = 0; i < outputs.Count; i++)
+			{
+				if (string.Equals(outputs[i].busName, busName, StringComparison.OrdinalIgnoreCase))
+				{
+					return outputs[i];
+				}
+			}
+
+			return null;
 		}
 
 		private bool AnySoloOnBus(string busName)
