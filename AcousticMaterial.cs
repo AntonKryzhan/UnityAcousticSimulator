@@ -16,6 +16,7 @@ namespace PhysicalAcousticsSim
 		[SerializeField] private float[] scattering = new float[AcousticBands.Count];
 		[SerializeField] private float[] transmissionLossDb = new float[AcousticBands.Count];
 		[SerializeField] private float[] structureTransmission = new float[AcousticBands.Count];
+		[SerializeField, HideInInspector] private int lastAppliedPreset = -1;
 
 		public MaterialPreset Preset => preset;
 		public string MaterialLabel => materialLabel;
@@ -36,10 +37,15 @@ namespace PhysicalAcousticsSim
 			AcousticBands.EnsureArray(ref transmissionLossDb, 20f);
 			AcousticBands.EnsureArray(ref structureTransmission, 0.5f);
 
+			if (lastAppliedPreset != (int)preset)
+			{
+				ApplyPreset();
+			}
+
 			thicknessMeters = Mathf.Max(0.001f, thicknessMeters);
 			densityKgPerM3 = Mathf.Max(1f, densityKgPerM3);
 			damping = Mathf.Clamp01(damping);
-			youngModulusGPa = Mathf.Max(0.1f, youngModulusGPa);
+			youngModulusGPa = Mathf.Max(0.001f, youngModulusGPa);
 		}
 
 		[ContextMenu("Apply Preset")]
@@ -52,6 +58,9 @@ namespace PhysicalAcousticsSim
 
 			switch (preset)
 			{
+				case MaterialPreset.Custom:
+					break;
+
 				case MaterialPreset.Concrete:
 					materialLabel = "Concrete";
 					thicknessMeters = 0.18f;
@@ -172,9 +181,71 @@ namespace PhysicalAcousticsSim
 					Assign(structureTransmission, 0.18f, 0.14f, 0.10f, 0.06f, 0.04f, 0.02f, 0.01f, 0.01f);
 					break;
 
+				case MaterialPreset.Latex:
+					materialLabel = "Latex";
+					thicknessMeters = 0.0012f;
+					densityKgPerM3 = 920f;
+					damping = 0.35f;
+					youngModulusGPa = 0.002f;
+					Assign(absorption, 0.03f, 0.04f, 0.05f, 0.06f, 0.08f, 0.10f, 0.12f, 0.14f);
+					Assign(scattering, 0.02f, 0.02f, 0.03f, 0.03f, 0.04f, 0.04f, 0.05f, 0.06f);
+					Assign(transmissionLossDb, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f);
+					Assign(structureTransmission, 0.85f, 0.82f, 0.76f, 0.68f, 0.56f, 0.44f, 0.32f, 0.22f);
+					break;
+
+				case MaterialPreset.Mylar:
+					materialLabel = "Mylar";
+					thicknessMeters = 0.00008f;
+					densityKgPerM3 = 1390f;
+					damping = 0.08f;
+					youngModulusGPa = 4f;
+					Assign(absorption, 0.01f, 0.01f, 0.015f, 0.02f, 0.025f, 0.03f, 0.035f, 0.04f);
+					Assign(scattering, 0.01f, 0.01f, 0.015f, 0.02f, 0.02f, 0.025f, 0.03f, 0.035f);
+					Assign(transmissionLossDb, 0.5f, 1f, 2f, 3f, 4f, 5f, 6f, 7f);
+					Assign(structureTransmission, 0.92f, 0.90f, 0.84f, 0.74f, 0.60f, 0.46f, 0.34f, 0.24f);
+					break;
+
+				case MaterialPreset.PvcFabric:
+					materialLabel = "PVC Fabric";
+					thicknessMeters = 0.0007f;
+					densityKgPerM3 = 1350f;
+					damping = 0.18f;
+					youngModulusGPa = 0.02f;
+					Assign(absorption, 0.02f, 0.03f, 0.04f, 0.05f, 0.07f, 0.09f, 0.11f, 0.13f);
+					Assign(scattering, 0.03f, 0.03f, 0.04f, 0.05f, 0.06f, 0.07f, 0.08f, 0.09f);
+					Assign(transmissionLossDb, 2f, 3f, 5f, 7f, 9f, 11f, 13f, 15f);
+					Assign(structureTransmission, 0.80f, 0.76f, 0.68f, 0.56f, 0.42f, 0.30f, 0.20f, 0.12f);
+					break;
+
+				case MaterialPreset.ReinforcedPvc:
+					materialLabel = "Reinforced PVC";
+					thicknessMeters = 0.0009f;
+					densityKgPerM3 = 1450f;
+					damping = 0.20f;
+					youngModulusGPa = 0.03f;
+					Assign(absorption, 0.02f, 0.03f, 0.04f, 0.06f, 0.08f, 0.10f, 0.12f, 0.14f);
+					Assign(scattering, 0.05f, 0.05f, 0.06f, 0.07f, 0.08f, 0.09f, 0.10f, 0.12f);
+					Assign(transmissionLossDb, 3f, 4f, 6f, 8f, 11f, 14f, 17f, 20f);
+					Assign(structureTransmission, 0.72f, 0.68f, 0.58f, 0.46f, 0.34f, 0.24f, 0.16f, 0.10f);
+					break;
+
+				case MaterialPreset.OxfordPu:
+					materialLabel = "Oxford PU";
+					thicknessMeters = 0.0006f;
+					densityKgPerM3 = 220f;
+					damping = 0.24f;
+					youngModulusGPa = 0.015f;
+					Assign(absorption, 0.03f, 0.05f, 0.07f, 0.10f, 0.14f, 0.18f, 0.22f, 0.26f);
+					Assign(scattering, 0.06f, 0.07f, 0.08f, 0.09f, 0.10f, 0.12f, 0.14f, 0.16f);
+					Assign(transmissionLossDb, 2f, 3f, 4f, 6f, 8f, 10f, 12f, 14f);
+					Assign(structureTransmission, 0.60f, 0.56f, 0.48f, 0.38f, 0.28f, 0.20f, 0.14f, 0.10f);
+					break;
+
 				default:
 					break;
 			}
+
+			lastAppliedPreset = (int)preset;
 		}
 
 		public float GetAbsorption(int band)
