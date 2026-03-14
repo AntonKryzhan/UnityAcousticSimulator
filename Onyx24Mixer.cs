@@ -39,20 +39,26 @@ namespace PhysicalAcousticsSim
 	[DisallowMultipleComponent]
 	public sealed class Onyx24Mixer : MonoBehaviour
 	{
+		private static readonly string[] DefaultChannelLayout =
+		{
+			"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+			"15/16", "17/18", "19/20", "21/22", "23/24"
+		};
+
 		[Header("Model")]
 		[SerializeField] private string mixerModel = "Mackie ONYX24";
 		[SerializeField] private string mixingType = "Analog";
-		[SerializeField] private int totalChannels = 24;
+		[SerializeField] private int totalChannels = 19;
 		[SerializeField] private int microphoneInputs = 18;
 		[SerializeField] private int stereoInputs = 5;
 		[SerializeField] private int xlrInputs = 18;
-		[SerializeField] private int jackInputs = 19;
+		[SerializeField] private int jackInputs = 24;
 		[SerializeField] private string xlrOutputs = "Stereo";
-		[SerializeField] private int monitorOutputs = 1;
+		[SerializeField] private int monitorOutputs = 0;
 		[SerializeField] private int jackOutputs = 3;
 		[SerializeField] private bool usbInterface = true;
 		[SerializeField] private bool phantomPowerAvailable = true;
-		[SerializeField] private bool fxProcessor = true;
+		[SerializeField] private bool fxProcessor = false;
 
 		[Header("Simulation")]
 		[SerializeField] private float simulationReferenceInputDbu = 0f;
@@ -98,23 +104,71 @@ namespace PhysicalAcousticsSim
 				outputs = new List<MixerBusOutput>();
 			}
 
+			if (totalChannels < 1)
+			{
+				totalChannels = 1;
+			}
+
 			while (channels.Count < totalChannels)
 			{
 				MixerInputChannel ch = new MixerInputChannel();
-				ch.channelName = "CH" + (channels.Count + 1).ToString();
+				ch.channelName = GetDefaultChannelName(channels.Count);
 				AcousticBands.EnsureArray(ref ch.eqBandGainDb, 0f);
 				channels.Add(ch);
+			}
+
+			while (channels.Count > totalChannels)
+			{
+				channels.RemoveAt(channels.Count - 1);
 			}
 
 			for (int i = 0; i < channels.Count; i++)
 			{
 				if (string.IsNullOrWhiteSpace(channels[i].channelName))
 				{
-					channels[i].channelName = "CH" + (i + 1).ToString();
+					channels[i].channelName = GetDefaultChannelName(i);
 				}
 
 				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
 			}
+
+			for (int i = outputs.Count - 1; i >= 0; i--)
+			{
+				string bus = outputs[i].busName;
+				if (string.Equals(bus, "FX", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(bus, "MON1", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(bus, "MON2", StringComparison.OrdinalIgnoreCase))
+				{
+					outputs.RemoveAt(i);
+				}
+			}
+
+			EnsureOutputBus("MAIN");
+			EnsureOutputBus("CONTROL ROOM");
+			EnsureOutputBus("PHONES");
+		}
+
+		private static string GetDefaultChannelName(int index)
+		{
+			if (index >= 0 && index < DefaultChannelLayout.Length)
+			{
+				return DefaultChannelLayout[index];
+			}
+
+			return "CH" + (index + 1).ToString();
+		}
+
+		private void EnsureOutputBus(string busName)
+		{
+			for (int i = 0; i < outputs.Count; i++)
+			{
+				if (string.Equals(outputs[i].busName, busName, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+			}
+
+			outputs.Add(new MixerBusOutput { busName = busName });
 		}
 
 		public MixerInputChannel GetChannelForMic(AcousticMicrophone microphone)
