@@ -178,6 +178,51 @@ namespace PhysicalAcousticsSim
 			outputs.Add(new MixerBusOutput { busName = busName });
 		}
 
+		private bool AnySoloOnBus(string busName)
+		{
+			if (channels == null)
+			{
+				return false;
+			}
+
+			for (int i = 0; i < channels.Count; i++)
+			{
+				MixerInputChannel ch = channels[i];
+				if (!ch.enabled || ch.muted || !ch.solo)
+				{
+					continue;
+				}
+
+				if (string.Equals(ch.assignedBus, busName, StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static float GetPanGainDb(float pan, string busName)
+		{
+			if (string.IsNullOrWhiteSpace(busName))
+			{
+				return 0f;
+			}
+
+			string upperBus = busName.Trim().ToUpperInvariant();
+			bool isLeft = upperBus == "MAIN L" || upperBus.EndsWith("/L", StringComparison.Ordinal) || upperBus.EndsWith(" L", StringComparison.Ordinal);
+			bool isRight = upperBus == "MAIN R" || upperBus.EndsWith("/R", StringComparison.Ordinal) || upperBus.EndsWith(" R", StringComparison.Ordinal);
+ 
+			if (!isLeft && !isRight)
+			{
+				return 0f;
+			}
+
+			float t = Mathf.Clamp01((Mathf.Clamp(pan, -1f, 1f) + 1f) * 0.5f);
+			float amp = isLeft ? Mathf.Cos(t * Mathf.PI * 0.5f) : Mathf.Sin(t * Mathf.PI * 0.5f);
+			return AcousticBands.AmplitudeToDb(Mathf.Max(0.0001f, amp));
+		}
+
 		public MixerInputChannel GetChannelForMic(AcousticMicrophone microphone)
 		{
 			if (microphone == null || channels == null)
@@ -282,9 +327,20 @@ namespace PhysicalAcousticsSim
 				return 0f;
 			}
 
+			if (AnySoloOnBus(output.busName) && !channel.solo)
+			{
+				return 0f;
+			}
+
+			if (!channel.lr && string.Equals(output.busName, "MAIN", StringComparison.OrdinalIgnoreCase))
+			{
+				return 0f;
+			}
+
 			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			float gainDb = channel.preampGainDb + channel.trimDb + channel.faderDb + output.levelDb + output.outputTrimDb;
 			gainDb += masterFaderDb + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
+			gainDb += GetPanGainDb(channel.pan, output.busName);
 			if (channel.eqEnabled)
 			{
 				gainDb += channel.eqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
@@ -311,7 +367,7 @@ namespace PhysicalAcousticsSim
 
 			if (channel.inputWire != null)
 			{
-				gainDb += channel.inputWire.GetLossDb(band, microphone.OutputImpedanceOhm, 2400f);
+				gainDb += channel.inputWire.GetLossDb(band, microphone.OutputImpedanceOhm, channel.hiZ ? 1000000f : 2400f);
 				chainPhaseRad += channel.inputWire.GetPhaseRadians();
 				chainPhaseRad += 2f * Mathf.PI * f * channel.inputWire.GetDelaySeconds();
 			}
