@@ -50,6 +50,8 @@ namespace PhysicalAcousticsSim
 		public const float PhysicalFaderMinDb = -60f;
 		public const float PhysicalFaderUnityDb = 0f;
 		public const float PhysicalFaderMaxDb = 10f;
+		public const float PhysicalPreampMinDb = -20f;
+		public const float PhysicalPreampMaxDb = 40f;
 
 		private static readonly string[] DefaultChannelLayout =
 		{
@@ -100,6 +102,7 @@ namespace PhysicalAcousticsSim
 				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
 				channels[i].hpfHz = Mathf.Max(10f, channels[i].hpfHz);
 				channels[i].lpfHz = Mathf.Max(channels[i].hpfHz + 10f, channels[i].lpfHz);
+				channels[i].preampGainDb = ClampPhysicalPreampGainDb(channels[i].preampGainDb);
 				channels[i].faderDb = ClampPhysicalFaderDb(channels[i].faderDb);
 				channels[i].pan = Mathf.Clamp(channels[i].pan, -1f, 1f);
 			}
@@ -124,6 +127,11 @@ namespace PhysicalAcousticsSim
 		{
 			float clamped = ClampPhysicalFaderDb(valueDb);
 			return IsPhysicalFaderOff(clamped) ? -120f : clamped;
+		}
+
+		public static float ClampPhysicalPreampGainDb(float valueDb)
+		{
+			return Mathf.Clamp(valueDb, PhysicalPreampMinDb, PhysicalPreampMaxDb);
 		}
 
 		[ContextMenu("Ensure Default Layout")]
@@ -166,6 +174,7 @@ namespace PhysicalAcousticsSim
 				}
 
 				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
+				channels[i].preampGainDb = ClampPhysicalPreampGainDb(channels[i].preampGainDb);
 				channels[i].faderDb = ClampPhysicalFaderDb(channels[i].faderDb);
 			}
 
@@ -573,7 +582,7 @@ namespace PhysicalAcousticsSim
 			}
 
 			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
-			float gainDb = channel.preampGainDb + channel.trimDb + GetPhysicalFaderGainDb(channel.faderDb) + GetPhysicalFaderGainDb(output.levelDb) + output.outputTrimDb;
+			float gainDb = ClampPhysicalPreampGainDb(channel.preampGainDb) + channel.trimDb + GetPhysicalFaderGainDb(channel.faderDb) + GetPhysicalFaderGainDb(output.levelDb) + output.outputTrimDb;
 			gainDb += GetPhysicalFaderGainDb(masterFaderDb) + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			gainDb += GetPanGainDb(channel.pan, output.busName);
 			if (IsStereoChannel(channel) && IsMainBus(output.busName))
