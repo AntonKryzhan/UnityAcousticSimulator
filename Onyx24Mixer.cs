@@ -16,10 +16,10 @@ namespace PhysicalAcousticsSim
 		public bool muted = false;
 		public bool solo = false;
 		public bool polarityInvert = false;
-		public float preampGainDb = 28f;
+		public float preampGainDb = 0f;
 		public float trimDb = 0f;
 		public bool lowCutEnabled = true;
-		public float hpfHz = 70f;
+		public float hpfHz = 100f;
 		public float lpfHz = 18000f;
 		public bool eqEnabled = true;
 		public float pan = 0f;
@@ -55,16 +55,15 @@ namespace PhysicalAcousticsSim
 		[SerializeField] private string mixerModel = "Mackie ONYX24";
 		[SerializeField] private string mixingType = "Analog";
 		[SerializeField] private int totalChannels = 19;
-		[SerializeField] private int microphoneInputs = 18;
+		[SerializeField] private int microphoneInputs = 22;
 		[SerializeField] private int stereoInputs = 5;
-		[SerializeField] private int xlrInputs = 18;
+		[SerializeField] private int xlrInputs = 22;
 		[SerializeField] private int jackInputs = 24;
-		[SerializeField] private string xlrOutputs = "Stereo";
-		[SerializeField] private int monitorOutputs = 0;
-		[SerializeField] private int jackOutputs = 3;
+		[SerializeField] private string xlrOutputs = "2 (MAIN L/R)";
+		[SerializeField] private int monitorOutputs = 2;
+		[SerializeField] private int jackOutputs = 7;
 		[SerializeField] private bool usbInterface = true;
 		[SerializeField] private bool phantomPowerAvailable = true;
-		[SerializeField] private bool fxProcessor = false;
 
 		[Header("Simulation")]
 		[SerializeField] private float simulationReferenceInputDbu = 0f;
@@ -143,9 +142,7 @@ namespace PhysicalAcousticsSim
 			for (int i = outputs.Count - 1; i >= 0; i--)
 			{
 				string bus = outputs[i].busName;
-				if (string.Equals(bus, "FX", StringComparison.OrdinalIgnoreCase) ||
-					string.Equals(bus, "MON1", StringComparison.OrdinalIgnoreCase) ||
-					string.Equals(bus, "MON2", StringComparison.OrdinalIgnoreCase))
+				if (string.Equals(bus, "FX", StringComparison.OrdinalIgnoreCase))
 				{
 					outputs.RemoveAt(i);
 				}
@@ -154,6 +151,8 @@ namespace PhysicalAcousticsSim
 			EnsureOutputBus("MAIN");
 			EnsureOutputBus("CONTROL ROOM");
 			EnsureOutputBus("PHONES");
+			EnsureOutputBus("MON1");
+			EnsureOutputBus("MON2");
 		}
 
 		private static string GetDefaultChannelName(int index)
