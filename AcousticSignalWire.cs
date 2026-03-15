@@ -16,10 +16,18 @@ namespace PhysicalAcousticsSim
 		[SerializeField] private bool balanced = true;
 		[SerializeField] private bool phaseInvert = false;
 
+		[Header("Optional Routing")]
+		[SerializeField] private AcousticSpeaker sourceSpeaker;
+		[SerializeField] private AcousticSpeaker targetSpeaker;
+		[SerializeField] private bool speakerPassthrough = false;
+
 		public string WireName => wireName;
 		public WireSignalType SignalType => signalType;
 		public float LengthMeters => lengthMeters;
 		public bool PhaseInvert => phaseInvert;
+		public AcousticSpeaker SourceSpeaker => sourceSpeaker;
+		public AcousticSpeaker TargetSpeaker => targetSpeaker;
+		public bool SpeakerPassthrough => speakerPassthrough;
 
 		private void OnValidate()
 		{
@@ -28,6 +36,16 @@ namespace PhysicalAcousticsSim
 			conductorResistancePerMeterOhm = Mathf.Max(0.0001f, conductorResistancePerMeterOhm);
 			capacitancePerMeterPf = Mathf.Max(0.1f, capacitancePerMeterPf);
 			shieldingQualityDb = Mathf.Max(0f, shieldingQualityDb);
+
+			if (sourceSpeaker != null && targetSpeaker == sourceSpeaker)
+			{
+				targetSpeaker = null;
+			}
+		}
+
+		public bool MatchesSpeakerRoute(AcousticSpeaker source, AcousticSpeaker target)
+		{
+			return sourceSpeaker == source && targetSpeaker == target;
 		}
 
 		public float GetDelaySeconds()
