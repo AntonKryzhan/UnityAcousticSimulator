@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using UnityEngine;
 
@@ -190,7 +192,6 @@ namespace PhysicalAcousticsSim
 				lateFieldOperatorSolver.ClearField();
 			}
 		}
-
 
 		private void RunPropagation()
 		{
@@ -1184,7 +1185,6 @@ namespace PhysicalAcousticsSim
 				return;
 			}
 
-			sb.AppendLine("Mixer Model: " + mixer.MixerModel);
 			List<MixerInputChannel> channels = mixer.Channels;
 			List<MixerBusOutput> outputs = mixer.Outputs;
 			int enabledChannels = 0;
@@ -1195,7 +1195,7 @@ namespace PhysicalAcousticsSim
 				for (int i = 0; i < channels.Count; i++)
 				{
 					MixerInputChannel channel = channels[i];
-					if (channel != null && channel.microphoneInput != null && channel.enabled && !channel.muted)
+					if (channel != null && (channel.microphoneInput != null || channel.stereoRightInput != null) && channel.enabled && !channel.muted)
 					{
 						enabledChannels++;
 					}
@@ -1214,8 +1214,11 @@ namespace PhysicalAcousticsSim
 				}
 			}
 
+			sb.AppendLine("Mixer Model: " + mixer.MixerModel);
 			sb.AppendLine("Active Input Channels: " + enabledChannels);
 			sb.AppendLine("Active Outputs: " + enabledOutputs);
+			sb.AppendLine("Mixer Settings:");
+			AppendSerializedFieldBlock(sb, mixer, 1, "channels", "outputs");
 
 			if (channels != null && channels.Count > 0)
 			{
@@ -1223,7 +1226,7 @@ namespace PhysicalAcousticsSim
 				for (int i = 0; i < channels.Count; i++)
 				{
 					MixerInputChannel channel = channels[i];
-					if (channel == null || channel.microphoneInput == null)
+					if (channel == null || (channel.microphoneInput == null && channel.stereoRightInput == null))
 					{
 						continue;
 					}
@@ -1232,39 +1235,13 @@ namespace PhysicalAcousticsSim
 					sb.Append(i + 1);
 					sb.Append("] ");
 					sb.Append(channel.channelName);
-					sb.Append(" -> ");
-					sb.Append(channel.microphoneInput.name);
-					sb.Append(" | enabled=");
-					sb.Append(channel.enabled);
-					sb.Append(" muted=");
-					sb.Append(channel.muted);
-					sb.Append(" phantom=");
-					sb.Append(channel.phantomPower);
-					sb.Append(" preamp=");
-					sb.Append(channel.preampGainDb.ToString("F1"));
-					sb.Append("dB");
-					sb.Append(" fader=");
-					sb.Append(channel.faderDb.ToString("F1"));
-					sb.Append("dB");
-					sb.Append(" HPF=");
-					sb.Append(channel.hpfHz.ToString("F0"));
-					sb.Append("Hz");
-					sb.Append(" LPF=");
-					sb.Append(channel.lpfHz.ToString("F0"));
-					sb.Append("Hz");
-					sb.Append(" bus=");
-					sb.Append(channel.assignedBus);
-
-					if (channel.inputWire != null)
-					{
-						sb.Append(" wire=");
-						sb.Append(channel.inputWire.WireName);
-						sb.Append(" ");
-						sb.Append(channel.inputWire.LengthMeters.ToString("F1"));
-						sb.Append("m");
-					}
-
 					sb.AppendLine();
+					AppendSerializedFieldBlock(sb, channel, 2, "channelName", "eqBandGainDb");
+
+					if (channel.eqBandGainDb != null && channel.eqBandGainDb.Length > 0)
+					{
+						AppendIndentedField(sb, 2, "eqBandGainDb", FormatMixerValue("eqBandGainDb", channel.eqBandGainDb));
+					}
 				}
 			}
 
@@ -1283,35 +1260,240 @@ namespace PhysicalAcousticsSim
 					sb.Append(i + 1);
 					sb.Append("] ");
 					sb.Append(output.busName);
-					sb.Append(" -> ");
-					sb.Append(output.targetSpeaker.name);
-					sb.Append(" | enabled=");
-					sb.Append(output.enabled);
-					sb.Append(" muted=");
-					sb.Append(output.muted);
-					sb.Append(" level=");
-					sb.Append(output.levelDb.ToString("F1"));
-					sb.Append("dB");
-					sb.Append(" trim=");
-					sb.Append(output.outputTrimDb.ToString("F1"));
-					sb.Append("dB");
-					sb.Append(" polarityInvert=");
-					sb.Append(output.polarityInvert);
-
-					if (output.outputWire != null)
-					{
-						sb.Append(" wire=");
-						sb.Append(output.outputWire.WireName);
-						sb.Append(" ");
-						sb.Append(output.outputWire.LengthMeters.ToString("F1"));
-						sb.Append("m");
-					}
-
 					sb.AppendLine();
+					AppendSerializedFieldBlock(sb, output, 2, "busName");
 				}
 			}
 
 			sb.AppendLine();
+		}
+
+		private void AppendSerializedFieldBlock(StringBuilder sb, object target, int indentLevel, params string[] excludedFieldNames)
+		{
+			if (target == null)
+			{
+				return;
+			}
+
+			HashSet<string> excluded = null;
+			if (excludedFieldNames != null && excludedFieldNames.Length > 0)
+			{
+				excluded = new HashSet<string>(excludedFieldNames, StringComparer.Ordinal);
+			}
+
+			List<FieldInfo> fields = GetSerializedFieldsInDeclarationOrder(target.GetType());
+			for (int i = 0; i < fields.Count; i++)
+			{
+				FieldInfo field = fields[i];
+				if (excluded != null && excluded.Contains(field.Name))
+				{
+					continue;
+				}
+
+				object value = field.GetValue(target);
+				AppendIndentedField(sb, indentLevel, field.Name, FormatMixerValue(field.Name, value));
+			}
+		}
+
+		private static List<FieldInfo> GetSerializedFieldsInDeclarationOrder(Type type)
+		{
+			const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+			List<FieldInfo> result = new List<FieldInfo>();
+			FieldInfo[] fields = type.GetFields(Flags);
+			for (int i = 0; i < fields.Length; i++)
+			{
+				FieldInfo field = fields[i];
+				if (field.IsStatic)
+				{
+					continue;
+				}
+
+				if (Attribute.IsDefined(field, typeof(HideInInspector)))
+				{
+					continue;
+				}
+
+				if (field.IsPublic || Attribute.IsDefined(field, typeof(SerializeField)))
+				{
+					result.Add(field);
+				}
+			}
+
+			result.Sort((a, b) => a.MetadataToken.CompareTo(b.MetadataToken));
+			return result;
+		}
+
+		private void AppendIndentedField(StringBuilder sb, int indentLevel, string name, string value)
+		{
+			for (int i = 0; i < indentLevel; i++)
+			{
+				sb.Append("  ");
+			}
+
+			sb.Append(name);
+			sb.Append("=");
+			sb.AppendLine(value);
+		}
+
+		private static string FormatMixerValue(string fieldName, object value)
+		{
+			if (value == null)
+			{
+				return "null";
+			}
+
+			if (value is string stringValue)
+			{
+				return string.IsNullOrWhiteSpace(stringValue) ? "\"\"" : stringValue;
+			}
+
+			if (value is bool boolValue)
+			{
+				return boolValue ? "True" : "False";
+			}
+
+			if (value is Enum enumValue)
+			{
+				return enumValue.ToString();
+			}
+
+			if (value is float floatValue)
+			{
+				return FormatMixerFloat(fieldName, floatValue);
+			}
+
+			if (value is double doubleValue)
+			{
+				return FormatMixerFloat(fieldName, (float)doubleValue);
+			}
+
+			if (value is int intValue)
+			{
+				return intValue.ToString();
+			}
+
+			if (value is Vector2 vector2)
+			{
+				return "(" + vector2.x.ToString("F2") + ", " + vector2.y.ToString("F2") + ")";
+			}
+
+			if (value is Vector3 vector3)
+			{
+				return "(" + vector3.x.ToString("F2") + ", " + vector3.y.ToString("F2") + ", " + vector3.z.ToString("F2") + ")";
+			}
+
+			if (value is UnityEngine.Object unityObject)
+			{
+				return unityObject != null ? unityObject.name + " (" + unityObject.GetType().Name + ")" : "null";
+			}
+
+			if (value is float[] floatArray)
+			{
+				return FormatBandValueArray(floatArray, fieldName);
+			}
+
+			if (value is IList list)
+			{
+				if (list.Count == 0)
+				{
+					return "[]";
+				}
+
+				StringBuilder listSb = new StringBuilder();
+				listSb.Append("[");
+				for (int i = 0; i < list.Count; i++)
+				{
+					if (i > 0)
+					{
+						listSb.Append(", ");
+					}
+
+					listSb.Append(FormatMixerValue(fieldName, list[i]));
+				}
+				listSb.Append("]");
+				return listSb.ToString();
+			}
+
+			return value.ToString();
+		}
+
+		private static string FormatMixerFloat(string fieldName, float value)
+		{
+			string lowerName = fieldName != null ? fieldName.ToLowerInvariant() : string.Empty;
+			if (lowerName.EndsWith("dbu"))
+			{
+				return value.ToString("F1") + "dBu";
+			}
+
+			if (lowerName.EndsWith("db"))
+			{
+				return value.ToString("F1") + "dB";
+			}
+
+			if (lowerName.EndsWith("hz") || lowerName.Contains("frequency"))
+			{
+				return value.ToString("F0") + "Hz";
+			}
+
+			if (lowerName.EndsWith("ms"))
+			{
+				return value.ToString("F2") + "ms";
+			}
+
+			if (lowerName.EndsWith("meters"))
+			{
+				return value.ToString("F2") + "m";
+			}
+
+			if (lowerName.EndsWith("ohm"))
+			{
+				return value.ToString("F1") + "Ω";
+			}
+
+			if (lowerName.Contains("pan"))
+			{
+				return value.ToString("F2");
+			}
+
+			return value.ToString("F2");
+		}
+
+		private static string FormatBandValueArray(float[] values, string fieldName)
+		{
+			if (values == null || values.Length == 0)
+			{
+				return "[]";
+			}
+
+			StringBuilder sb = new StringBuilder(values.Length * 12);
+			bool useDbUnits = string.IsNullOrEmpty(fieldName) || fieldName.IndexOf("db", StringComparison.OrdinalIgnoreCase) >= 0;
+			for (int i = 0; i < values.Length; i++)
+			{
+				if (i > 0)
+				{
+					sb.Append(" | ");
+				}
+
+				if (i < AcousticBands.Count)
+				{
+					sb.Append(AcousticBands.CenterFrequenciesHz[i].ToString("F0"));
+					sb.Append("Hz=");
+				}
+				else
+				{
+					sb.Append("[");
+					sb.Append(i);
+					sb.Append("]=");
+				}
+
+				sb.Append(values[i].ToString(useDbUnits ? "F1" : "F2"));
+				if (useDbUnits)
+				{
+					sb.Append("dB");
+				}
+			}
+
+			return sb.ToString();
 		}
 
 		private void AppendSpeakerSummary(StringBuilder sb)
