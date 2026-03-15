@@ -43,6 +43,15 @@ namespace PhysicalAcousticsSim
         [SerializeField] private float masterGainDb = 0f;
         [SerializeField] private float[] bandTrimDb = new float[AcousticBands.Count];
 
+        [Header("Signal Routing")]
+        [SerializeField] private bool feedFromUpstreamSpeaker = false;
+        [SerializeField] private AcousticSpeaker upstreamSpeaker;
+        [SerializeField] private AcousticSignalWire upstreamInputWire;
+        [SerializeField] private float upstreamSignalTrimDb = 0f;
+        [SerializeField] private float upstreamLatencyMs = 0f;
+        [SerializeField] private bool upstreamPolarityInvert = false;
+        [SerializeField] private float upstreamSourceImpedanceOhm = 100f;
+
         public string ModelName => modelName;
         public SpeakerRole Role => role;
         public bool EmitToRoom => emitToRoom;
@@ -52,6 +61,13 @@ namespace PhysicalAcousticsSim
         public Vector2 HorizontalCoverageDegrees => horizontalCoverageDegrees;
         public float VerticalCoverageDeg => verticalCoverageDeg;
         public EmissionFace SoundEmissionFace => emissionFace;
+        public bool FeedFromUpstreamSpeaker => feedFromUpstreamSpeaker && upstreamSpeaker != null;
+        public AcousticSpeaker UpstreamSpeaker => FeedFromUpstreamSpeaker ? upstreamSpeaker : null;
+        public AcousticSignalWire UpstreamInputWire => FeedFromUpstreamSpeaker ? upstreamInputWire : null;
+        public float UpstreamSignalTrimDb => upstreamSignalTrimDb;
+        public float UpstreamLatencySeconds => Mathf.Max(0f, upstreamLatencyMs) * 0.001f;
+        public bool UpstreamPolarityInvert => upstreamPolarityInvert;
+        public float UpstreamSourceImpedanceOhm => Mathf.Max(0.1f, upstreamSourceImpedanceOhm);
 
         private void Reset()
         {
@@ -82,6 +98,14 @@ namespace PhysicalAcousticsSim
             gizmoArrowLength = Mathf.Max(0.05f, gizmoArrowLength);
             gizmoArrowHeadLength = Mathf.Max(0.02f, gizmoArrowHeadLength);
             gizmoArrowHeadAngleDeg = Mathf.Clamp(gizmoArrowHeadAngleDeg, 5f, 80f);
+            upstreamLatencyMs = Mathf.Max(0f, upstreamLatencyMs);
+            upstreamSourceImpedanceOhm = Mathf.Max(0.1f, upstreamSourceImpedanceOhm);
+
+            if (upstreamSpeaker == this)
+            {
+                upstreamSpeaker = null;
+                feedFromUpstreamSpeaker = false;
+            }
         }
 
         public float GetEffectiveSimulationCrossoverHz()
