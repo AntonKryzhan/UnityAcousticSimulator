@@ -225,30 +225,22 @@ namespace PhysicalAcousticsSim
 					outputTrimDb = output.outputTrimDb
 				});
 			}
-
-			presetAsset = targetPreset;
-			presetName = targetPreset.PresetName;
 		}
 
-		public void LoadFromPreset(Onyx24MixerPreset sourcePreset)
+		public bool LoadFromPreset(Onyx24MixerPreset sourcePreset)
 		{
 			if (sourcePreset == null)
 			{
-				return;
+				return false;
 			}
 
 			sourcePreset.EnsureData();
 			presetAsset = sourcePreset;
 			presetName = NormalizePresetName(sourcePreset.PresetName);
-
+			mixerModel = string.IsNullOrWhiteSpace(sourcePreset.MixerModel) ? mixerModel : sourcePreset.MixerModel;
 			masterFaderDb = ClampPhysicalFaderDb(sourcePreset.MasterFaderDb);
 			AcousticBands.EnsureArray(ref masterEqBandGainDb, 0f);
 			AcousticBands.Copy(sourcePreset.MasterEqBandGainDb, masterEqBandGainDb);
-
-			if (sourcePreset.Channels.Count > 0)
-			{
-				totalChannels = sourcePreset.Channels.Count;
-			}
 
 			EnsureDefaultLayout();
 
@@ -256,62 +248,73 @@ namespace PhysicalAcousticsSim
 			for (int i = 0; i < channelCount; i++)
 			{
 				MixerInputChannel channel = channels[i];
-				MixerInputChannelPresetData presetChannel = sourcePreset.Channels[i];
-
-				channel.channelName = presetChannel.channelName;
-				channel.enabled = presetChannel.enabled;
-				channel.phantomPower = presetChannel.phantomPower;
-				channel.hiZ = presetChannel.hiZ;
-				channel.muted = presetChannel.muted;
-				channel.solo = presetChannel.solo;
-				channel.polarityInvert = presetChannel.polarityInvert;
-				channel.preampGainDb = ClampPhysicalPreampGainDb(presetChannel.preampGainDb);
-				channel.trimDb = presetChannel.trimDb;
-				channel.lowCutEnabled = presetChannel.lowCutEnabled;
-				channel.hpfHz = Mathf.Max(10f, presetChannel.hpfHz);
-				channel.lpfHz = Mathf.Max(channel.hpfHz + 10f, presetChannel.lpfHz);
-				channel.eqEnabled = presetChannel.eqEnabled;
-				channel.pan = Mathf.Clamp(presetChannel.pan, -1f, 1f);
-				channel.lr = presetChannel.lr;
-				channel.faderDb = ClampPhysicalFaderDb(presetChannel.faderDb);
-				channel.assignedBus = presetChannel.assignedBus;
-				channel.eqHighGainDb = ClampChannelEqGainDb(presetChannel.eqHighGainDb);
-				channel.eqMidGainDb = ClampChannelEqGainDb(presetChannel.eqMidGainDb);
-				channel.eqMidFrequencyHz = ClampChannelEqMidFrequencyHz(presetChannel.eqMidFrequencyHz);
-				channel.eqLowGainDb = ClampChannelEqGainDb(presetChannel.eqLowGainDb);
+				MixerInputChannelPresetData data = sourcePreset.Channels[i];
+				channel.channelName = string.IsNullOrWhiteSpace(data.channelName) ? channel.channelName : data.channelName;
+				channel.enabled = data.enabled;
+				channel.phantomPower = data.phantomPower;
+				channel.hiZ = data.hiZ;
+				channel.muted = data.muted;
+				channel.solo = data.solo;
+				channel.polarityInvert = data.polarityInvert;
+				channel.preampGainDb = ClampPhysicalPreampGainDb(data.preampGainDb);
+				channel.trimDb = data.trimDb;
+				channel.lowCutEnabled = data.lowCutEnabled;
+				channel.hpfHz = Mathf.Max(10f, data.hpfHz);
+				channel.lpfHz = Mathf.Max(channel.hpfHz + 10f, data.lpfHz);
+				channel.eqEnabled = data.eqEnabled;
+				channel.pan = Mathf.Clamp(data.pan, -1f, 1f);
+				channel.lr = data.lr;
+				channel.faderDb = ClampPhysicalFaderDb(data.faderDb);
+				channel.assignedBus = string.IsNullOrWhiteSpace(data.assignedBus) ? "MAIN" : data.assignedBus;
+				channel.eqHighGainDb = ClampChannelEqGainDb(data.eqHighGainDb);
+				channel.eqMidGainDb = ClampChannelEqGainDb(data.eqMidGainDb);
+				channel.eqMidFrequencyHz = ClampChannelEqMidFrequencyHz(data.eqMidFrequencyHz);
+				channel.eqLowGainDb = ClampChannelEqGainDb(data.eqLowGainDb);
 				UpdateChannelEqBands(channel);
 			}
 
-			for (int i = 0; i < sourcePreset.Outputs.Count; i++)
+			int outputCount = Mathf.Min(outputs.Count, sourcePreset.Outputs.Count);
+			for (int i = 0; i < outputCount; i++)
 			{
-				MixerBusOutputPresetData presetOutput = sourcePreset.Outputs[i];
-				if (string.IsNullOrWhiteSpace(presetOutput.busName))
-				{
-					continue;
-				}
-
-				EnsureOutputBus(presetOutput.busName);
-				MixerBusOutput output = GetOutputByBusName(presetOutput.busName);
-				if (output == null)
-				{
-					continue;
-				}
-
-				output.enabled = presetOutput.enabled;
-				output.muted = presetOutput.muted;
-				output.polarityInvert = presetOutput.polarityInvert;
-				output.levelDb = ClampPhysicalFaderDb(presetOutput.levelDb);
-				output.outputTrimDb = presetOutput.outputTrimDb;
+				MixerBusOutput output = outputs[i];
+				MixerBusOutputPresetData data = sourcePreset.Outputs[i];
+				output.busName = string.IsNullOrWhiteSpace(data.busName) ? output.busName : data.busName;
+				output.enabled = data.enabled;
+				output.muted = data.muted;
+				output.polarityInvert = data.polarityInvert;
+				output.levelDb = ClampPhysicalFaderDb(data.levelDb);
+				output.outputTrimDb = data.outputTrimDb;
 			}
+
+			return true;
+		}
+
+		public void CapturePresetFromCurrent()
+		{
+			if (presetAsset == null)
+			{
+				return;
+			}
+
+			SaveToPreset(presetAsset);
+		}
+
+		public bool ApplyPresetAsset()
+		{
+			return LoadFromPreset(presetAsset);
 		}
 
 		private static string NormalizePresetName(string value)
 		{
-			return string.IsNullOrWhiteSpace(value) ? "New Preset" : value.Trim();
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return "New Preset";
+			}
+
+			return value.Trim();
 		}
 
-		[ContextMenu("Ensure Default Layout")]
-		public void EnsureDefaultLayout()
+		private void EnsureDefaultLayout()
 		{
 			if (channels == null)
 			{
@@ -323,19 +326,17 @@ namespace PhysicalAcousticsSim
 				outputs = new List<MixerBusOutput>();
 			}
 
-			if (totalChannels < 1)
-			{
-				totalChannels = 1;
-			}
+			totalChannels = Mathf.Clamp(totalChannels, 1, DefaultChannelLayout.Length);
+			microphoneInputs = Mathf.Clamp(microphoneInputs, 0, totalChannels + stereoInputs);
+			stereoInputs = Mathf.Clamp(stereoInputs, 0, 8);
+			xlrInputs = Mathf.Clamp(xlrInputs, 0, totalChannels + stereoInputs);
+			jackInputs = Mathf.Clamp(jackInputs, 0, totalChannels + stereoInputs + stereoInputs);
+			monitorOutputs = Mathf.Clamp(monitorOutputs, 0, 8);
+			jackOutputs = Mathf.Clamp(jackOutputs, 0, 32);
 
 			while (channels.Count < totalChannels)
 			{
-				MixerInputChannel ch = new MixerInputChannel();
-				ch.channelName = GetDefaultChannelName(channels.Count);
-				AcousticBands.EnsureArray(ref ch.eqBandGainDb, 0f);
-				ch.faderDb = PhysicalFaderUnityDb;
-				UpdateChannelEqBands(ch);
-				channels.Add(ch);
+				channels.Add(new MixerInputChannel());
 			}
 
 			while (channels.Count > totalChannels)
@@ -345,132 +346,138 @@ namespace PhysicalAcousticsSim
 
 			for (int i = 0; i < channels.Count; i++)
 			{
-				if (string.IsNullOrWhiteSpace(channels[i].channelName))
+				MixerInputChannel channel = channels[i];
+				channel.channelName = DefaultChannelLayout[i];
+				if (string.IsNullOrWhiteSpace(channel.assignedBus))
 				{
-					channels[i].channelName = GetDefaultChannelName(i);
+					channel.assignedBus = "MAIN";
 				}
 
-				AcousticBands.EnsureArray(ref channels[i].eqBandGainDb, 0f);
-				channels[i].preampGainDb = ClampPhysicalPreampGainDb(channels[i].preampGainDb);
-				channels[i].faderDb = ClampPhysicalFaderDb(channels[i].faderDb);
-				UpdateChannelEqBands(channels[i]);
+				AcousticBands.EnsureArray(ref channel.eqBandGainDb, 0f);
+				UpdateChannelEqBands(channel);
+				channel.preampGainDb = ClampPhysicalPreampGainDb(channel.preampGainDb);
+				channel.faderDb = ClampPhysicalFaderDb(channel.faderDb);
+				channel.hpfHz = Mathf.Max(10f, channel.hpfHz);
+				channel.lpfHz = Mathf.Max(channel.hpfHz + 10f, channel.lpfHz);
+				channel.pan = Mathf.Clamp(channel.pan, -1f, 1f);
 			}
 
-			for (int i = outputs.Count - 1; i >= 0; i--)
+			int desiredOutputs = Mathf.Max(2, monitorOutputs + 2);
+			while (outputs.Count < desiredOutputs)
 			{
-				string bus = outputs[i].busName;
-				if (string.Equals(bus, "FX", StringComparison.OrdinalIgnoreCase))
-				{
-					outputs.RemoveAt(i);
-				}
+				outputs.Add(new MixerBusOutput());
 			}
 
-			EnsureOutputBus("MAIN L");
-			EnsureOutputBus("MAIN R");
-			EnsureOutputBus("MAIN");
-			EnsureOutputBus("CONTROL ROOM");
-			EnsureOutputBus("PHONES");
-			EnsureOutputBus("MON1");
-			EnsureOutputBus("MON2");
+			while (outputs.Count > desiredOutputs)
+			{
+				outputs.RemoveAt(outputs.Count - 1);
+			}
 
 			for (int i = 0; i < outputs.Count; i++)
 			{
-				outputs[i].levelDb = ClampPhysicalFaderDb(outputs[i].levelDb);
+				MixerBusOutput output = outputs[i];
+				if (string.IsNullOrWhiteSpace(output.busName))
+				{
+					output.busName = i switch
+					{
+						0 => "MAIN L",
+						1 => "MAIN R",
+						_ => "AUX " + (i - 1)
+					};
+				}
+
+				output.levelDb = ClampPhysicalFaderDb(output.levelDb);
 			}
 		}
 
-		private static void UpdateChannelEqBands(MixerInputChannel channel)
+		private static bool IsStereoChannel(MixerInputChannel channel)
+		{
+			return channel != null && !string.IsNullOrWhiteSpace(channel.channelName) && channel.channelName.Contains("/");
+		}
+
+		private void UpdateChannelEqBands(MixerInputChannel channel)
 		{
 			if (channel == null)
 			{
 				return;
 			}
 
+			AcousticBands.EnsureArray(ref channel.eqBandGainDb, 0f);
 			channel.eqHighGainDb = ClampChannelEqGainDb(channel.eqHighGainDb);
 			channel.eqMidGainDb = ClampChannelEqGainDb(channel.eqMidGainDb);
-			channel.eqLowGainDb = ClampChannelEqGainDb(channel.eqLowGainDb);
 			channel.eqMidFrequencyHz = ClampChannelEqMidFrequencyHz(channel.eqMidFrequencyHz);
+			channel.eqLowGainDb = ClampChannelEqGainDb(channel.eqLowGainDb);
 
-			AcousticBands.EnsureArray(ref channel.eqBandGainDb, 0f);
-			AcousticBands.SetAll(channel.eqBandGainDb, 0f);
+			float midCenter = channel.eqMidFrequencyHz;
+			float halfWidth = MidBellWidthOctaves * 0.5f;
+			float midLow = midCenter / Mathf.Pow(2f, halfWidth);
+			float midHigh = midCenter * Mathf.Pow(2f, halfWidth);
 
 			for (int i = 0; i < AcousticBands.Count; i++)
 			{
-				float centerHz = AcousticBands.CenterFrequenciesHz[i];
-				float lowWeight = GetLowShelfWeight(centerHz, SimulatedLowShelfHz);
-				float midWeight = GetBellWeight(centerHz, channel.eqMidFrequencyHz, MidBellWidthOctaves);
-				float highWeight = GetHighShelfWeight(centerHz, SimulatedHighShelfHz);
-
-				channel.eqBandGainDb[i] =
-					channel.eqLowGainDb * lowWeight +
-					channel.eqMidGainDb * midWeight +
-					channel.eqHighGainDb * highWeight;
+				float f = AcousticBands.CenterFrequenciesHz[i];
+				float lowWeight = AcousticBands.LPFWeight(SimulatedLowShelfHz, f);
+				float highWeight = 1f - AcousticBands.LPFWeight(SimulatedHighShelfReferenceHz, f);
+				float midWeight = AcousticBands.BandPassWeight(midLow, midHigh, f);
+				channel.eqBandGainDb[i] = (channel.eqLowGainDb * lowWeight) + (channel.eqMidGainDb * midWeight) + (channel.eqHighGainDb * highWeight);
 			}
 		}
 
-		private static float GetLowShelfWeight(float bandCenterHz, float shelfHz)
+		private bool IsAssignedToBus(MixerInputChannel channel, string busName)
 		{
-			float octaves = Mathf.Log(Mathf.Max(1f, bandCenterHz) / Mathf.Max(1f, shelfHz), 2f);
-			return 1f / (1f + Mathf.Exp(2.2f * octaves));
-		}
-
-		private static float GetHighShelfWeight(float bandCenterHz, float shelfHz)
-		{
-			float effectiveShelfHz = Mathf.Min(shelfHz, SimulatedHighShelfReferenceHz);
-			float octaves = Mathf.Log(Mathf.Max(1f, bandCenterHz) / Mathf.Max(1f, effectiveShelfHz), 2f);
-			return 1f / (1f + Mathf.Exp(-2.2f * octaves));
-		}
-
-		private static float GetBellWeight(float bandCenterHz, float centerHz, float widthOctaves)
-		{
-			float octaves = Mathf.Log(Mathf.Max(1f, bandCenterHz) / Mathf.Max(1f, centerHz), 2f);
-			float sigma = Mathf.Max(0.01f, widthOctaves);
-			return Mathf.Exp(-(octaves * octaves) / (2f * sigma * sigma));
-		}
-
-		private static string GetDefaultChannelName(int index)
-		{
-			if (index >= 0 && index < DefaultChannelLayout.Length)
+			if (channel == null)
 			{
-				return DefaultChannelLayout[index];
+				return false;
 			}
 
-			return "CH" + (index + 1).ToString();
+			string assigned = string.IsNullOrWhiteSpace(channel.assignedBus) ? "MAIN" : channel.assignedBus.Trim();
+			string target = string.IsNullOrWhiteSpace(busName) ? "MAIN" : busName.Trim();
+
+			if (string.Equals(assigned, "MAIN", StringComparison.OrdinalIgnoreCase))
+			{
+				return IsMainBus(target);
+			}
+
+			return string.Equals(assigned, target, StringComparison.OrdinalIgnoreCase);
 		}
 
-		private void EnsureOutputBus(string busName)
+		private static bool IsMainBus(string busName)
 		{
-			for (int i = 0; i < outputs.Count; i++)
+			if (string.IsNullOrWhiteSpace(busName))
 			{
-				if (string.Equals(outputs[i].busName, busName, StringComparison.OrdinalIgnoreCase))
-				{
-					return;
-				}
+				return true;
 			}
 
-			outputs.Add(new MixerBusOutput
-			{
-				busName = busName,
-				levelDb = PhysicalFaderUnityDb
-			});
+			string normalized = busName.Trim();
+			return string.Equals(normalized, "MAIN", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "MAIN L", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "MAIN R", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "L", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "R", StringComparison.OrdinalIgnoreCase);
 		}
 
-		private MixerBusOutput GetOutputByBusName(string busName)
+		private static bool IsMainLeftBus(string busName)
 		{
-			if (outputs == null || string.IsNullOrWhiteSpace(busName))
+			if (string.IsNullOrWhiteSpace(busName))
 			{
-				return null;
+				return false;
 			}
 
-			for (int i = 0; i < outputs.Count; i++)
+			string normalized = busName.Trim();
+			return string.Equals(normalized, "MAIN L", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "L", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static bool IsMainRightBus(string busName)
+		{
+			if (string.IsNullOrWhiteSpace(busName))
 			{
-				if (string.Equals(outputs[i].busName, busName, StringComparison.OrdinalIgnoreCase))
-				{
-					return outputs[i];
-				}
+				return false;
 			}
 
-			return null;
+			string normalized = busName.Trim();
+			return string.Equals(normalized, "MAIN R", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "R", StringComparison.OrdinalIgnoreCase);
 		}
 
 		private bool AnySoloOnBus(string busName)
@@ -482,13 +489,8 @@ namespace PhysicalAcousticsSim
 
 			for (int i = 0; i < channels.Count; i++)
 			{
-				MixerInputChannel ch = channels[i];
-				if (!ch.enabled || ch.muted || !ch.solo)
-				{
-					continue;
-				}
-
-				if (IsAssignedToBus(ch, busName))
+				MixerInputChannel channel = channels[i];
+				if (channel != null && channel.enabled && channel.solo && IsAssignedToBus(channel, busName))
 				{
 					return true;
 				}
@@ -497,101 +499,34 @@ namespace PhysicalAcousticsSim
 			return false;
 		}
 
-		private static bool IsMainLeftBus(string busName)
+		private bool IsChannelInputPhysicallyAvailable(MixerInputChannel channel, bool isStereoRightSide)
 		{
-			if (string.IsNullOrWhiteSpace(busName))
+			if (channel == null || channels == null)
 			{
 				return false;
 			}
 
-			string upperBus = busName.Trim().ToUpperInvariant();
-			return upperBus == "MAIN L" || upperBus.EndsWith("/L", StringComparison.Ordinal) || upperBus.EndsWith(" L", StringComparison.Ordinal);
-		}
-
-		private static bool IsMainRightBus(string busName)
-		{
-			if (string.IsNullOrWhiteSpace(busName))
+			int index = channels.IndexOf(channel);
+			if (index < 0)
 			{
 				return false;
 			}
 
-			string upperBus = busName.Trim().ToUpperInvariant();
-			return upperBus == "MAIN R" || upperBus.EndsWith("/R", StringComparison.Ordinal) || upperBus.EndsWith(" R", StringComparison.Ordinal);
-		}
-
-		private static bool IsMainBus(string busName)
-		{
-			if (string.IsNullOrWhiteSpace(busName))
+			if (IsStereoChannel(channel))
 			{
-				return false;
-			}
-
-			string upperBus = busName.Trim().ToUpperInvariant();
-			return upperBus == "MAIN" || IsMainLeftBus(upperBus) || IsMainRightBus(upperBus);
-		}
-
-		private static bool IsAssignedToBus(MixerInputChannel channel, string busName)
-		{
-			if (channel == null)
-			{
-				return false;
-			}
-
-			if (string.Equals(channel.assignedBus, busName, StringComparison.OrdinalIgnoreCase))
-			{
-				return true;
-			}
-
-			return IsMainBus(channel.assignedBus) && IsMainBus(busName);
-		}
-
-		private static bool IsStereoChannel(MixerInputChannel channel)
-		{
-			return channel != null && !string.IsNullOrWhiteSpace(channel.channelName) && channel.channelName.Contains("/");
-		}
-
-		private int GetChannelInputSlot(MixerInputChannel channel, bool rightSide)
-		{
-			if (channels == null || channel == null)
-			{
-				return -1;
-			}
-
-			int slot = 0;
-			for (int i = 0; i < channels.Count; i++)
-			{
-				MixerInputChannel c = channels[i];
-				bool stereo = IsStereoChannel(c);
-				if (c == channel)
+				int stereoStart = Mathf.Max(0, totalChannels - stereoInputs);
+				if (index < stereoStart)
 				{
-					return slot + ((stereo && rightSide) ? 1 : 0);
+					return !isStereoRightSide && index < microphoneInputs;
 				}
 
-				slot += stereo ? 2 : 1;
+				int stereoIndex = index - stereoStart;
+				int physicalLeft = microphoneInputs + (stereoIndex * 2);
+				int physicalRight = physicalLeft + 1;
+				return isStereoRightSide ? physicalRight < jackInputs : physicalLeft < jackInputs;
 			}
 
-			return -1;
-		}
-
-		private bool IsChannelInputPhysicallyAvailable(MixerInputChannel channel, bool rightSide)
-		{
-			if (channel == null)
-			{
-				return false;
-			}
-
-			if (rightSide && !IsStereoChannel(channel))
-			{
-				return false;
-			}
-
-			int slot = GetChannelInputSlot(channel, rightSide);
-			if (slot < 0 || slot >= jackInputs || slot >= microphoneInputs || slot >= xlrInputs)
-			{
-				return false;
-			}
-
-			return true;
+			return index < microphoneInputs;
 		}
 
 		private int GetDeclaredXlrOutputCount()
@@ -714,7 +649,7 @@ namespace PhysicalAcousticsSim
 			return null;
 		}
 
-		public MixerBusOutput GetOutputForSpeaker(AcousticSpeaker speaker)
+		private MixerBusOutput GetDirectOutputForSpeaker(AcousticSpeaker speaker)
 		{
 			if (speaker == null || outputs == null)
 			{
@@ -732,6 +667,71 @@ namespace PhysicalAcousticsSim
 			return null;
 		}
 
+		private bool TryResolveSpeakerSignalPath(AcousticSpeaker speaker, int band, HashSet<AcousticSpeaker> visited, out MixerBusOutput output, out AcousticSpeaker mixerTargetSpeaker, out float additionalGainDb, out float additionalPhaseRad)
+		{
+			output = null;
+			mixerTargetSpeaker = null;
+			additionalGainDb = 0f;
+			additionalPhaseRad = 0f;
+
+			if (speaker == null)
+			{
+				return false;
+			}
+
+			if (visited == null)
+			{
+				visited = new HashSet<AcousticSpeaker>();
+			}
+
+			if (!visited.Add(speaker))
+			{
+				return false;
+			}
+
+			output = GetDirectOutputForSpeaker(speaker);
+			if (output != null)
+			{
+				mixerTargetSpeaker = speaker;
+				return true;
+			}
+
+			if (!speaker.FeedFromUpstreamSpeaker || speaker.UpstreamSpeaker == null)
+			{
+				return false;
+			}
+
+			if (!TryResolveSpeakerSignalPath(speaker.UpstreamSpeaker, band, visited, out output, out mixerTargetSpeaker, out additionalGainDb, out additionalPhaseRad))
+			{
+				return false;
+			}
+
+			additionalGainDb += speaker.UpstreamSignalTrimDb;
+			if (speaker.UpstreamPolarityInvert)
+			{
+				additionalPhaseRad += Mathf.PI;
+			}
+
+			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
+			additionalPhaseRad += 2f * Mathf.PI * f * speaker.UpstreamLatencySeconds;
+
+			AcousticSignalWire upstreamWire = speaker.UpstreamInputWire;
+			if (upstreamWire != null)
+			{
+				additionalGainDb += upstreamWire.GetLossDb(band, speaker.UpstreamSourceImpedanceOhm, speaker.InputImpedanceOhm);
+				additionalPhaseRad += upstreamWire.GetPhaseRadians();
+				additionalPhaseRad += 2f * Mathf.PI * f * upstreamWire.GetDelaySeconds();
+			}
+
+			return true;
+		}
+
+		public MixerBusOutput GetOutputForSpeaker(AcousticSpeaker speaker)
+		{
+			TryResolveSpeakerSignalPath(speaker, 0, new HashSet<AcousticSpeaker>(), out MixerBusOutput output, out _, out _, out _);
+			return output;
+		}
+
 		public float GetSpeakerBandEmissionOffsetDb(AcousticSpeaker speaker, int band, out float sourcePhaseRad)
 		{
 			sourcePhaseRad = 0f;
@@ -743,29 +743,32 @@ namespace PhysicalAcousticsSim
 			float gainDb = simulationReferenceInputDbu - speaker.NominalInputLevelDbuForMaxSpl + GetPhysicalFaderGainDb(masterFaderDb) + masterEqBandGainDb[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 			float f = AcousticBands.CenterFrequenciesHz[Mathf.Clamp(band, 0, AcousticBands.Count - 1)];
 
-			MixerBusOutput output = GetOutputForSpeaker(speaker);
-			if (output != null)
+			if (!TryResolveSpeakerSignalPath(speaker, band, new HashSet<AcousticSpeaker>(), out MixerBusOutput output, out AcousticSpeaker mixerTargetSpeaker, out float additionalGainDb, out float additionalPhaseRad) || output == null || mixerTargetSpeaker == null)
 			{
-				if (!output.enabled || output.muted || IsPhysicalFaderOff(output.levelDb))
-				{
-					return -120f;
-				}
-
-				gainDb += GetPhysicalFaderGainDb(output.levelDb) + output.outputTrimDb;
-
-				if (output.polarityInvert)
-				{
-					sourcePhaseRad += Mathf.PI;
-				}
-
-				if (output.outputWire != null)
-				{
-					gainDb += output.outputWire.GetLossDb(band, 100f, speaker.InputImpedanceOhm);
-					sourcePhaseRad += output.outputWire.GetPhaseRadians();
-					sourcePhaseRad += 2f * Mathf.PI * f * output.outputWire.GetDelaySeconds();
-				}
+				return -120f;
 			}
 
+			if (!output.enabled || output.muted || IsPhysicalFaderOff(output.levelDb))
+			{
+				return -120f;
+			}
+
+			gainDb += GetPhysicalFaderGainDb(output.levelDb) + output.outputTrimDb;
+
+			if (output.polarityInvert)
+			{
+				sourcePhaseRad += Mathf.PI;
+			}
+
+			if (output.outputWire != null)
+			{
+				gainDb += output.outputWire.GetLossDb(band, 100f, mixerTargetSpeaker.InputImpedanceOhm);
+				sourcePhaseRad += output.outputWire.GetPhaseRadians();
+				sourcePhaseRad += 2f * Mathf.PI * f * output.outputWire.GetDelaySeconds();
+			}
+
+			gainDb += additionalGainDb;
+			sourcePhaseRad += additionalPhaseRad;
 			sourcePhaseRad += 2f * Mathf.PI * f * (internalLatencyMs * 0.001f);
 			return gainDb;
 		}
@@ -779,9 +782,13 @@ namespace PhysicalAcousticsSim
 			}
 
 			MixerInputChannel channel = GetChannelForMic(microphone);
-			MixerBusOutput output = GetOutputForSpeaker(speaker);
 			bool isStereoRightInput = false;
-			if (channel == null || output == null)
+			if (channel == null)
+			{
+				return 0f;
+			}
+
+			if (!TryResolveSpeakerSignalPath(speaker, band, new HashSet<AcousticSpeaker>(), out MixerBusOutput output, out AcousticSpeaker mixerTargetSpeaker, out float additionalGainDb, out float additionalPhaseRad) || output == null || mixerTargetSpeaker == null)
 			{
 				return 0f;
 			}
@@ -877,10 +884,13 @@ namespace PhysicalAcousticsSim
 
 			if (output.outputWire != null)
 			{
-				gainDb += output.outputWire.GetLossDb(band, 100f, speaker.InputImpedanceOhm);
+				gainDb += output.outputWire.GetLossDb(band, 100f, mixerTargetSpeaker.InputImpedanceOhm);
 				chainPhaseRad += output.outputWire.GetPhaseRadians();
 				chainPhaseRad += 2f * Mathf.PI * f * output.outputWire.GetDelaySeconds();
 			}
+
+			gainDb += additionalGainDb;
+			chainPhaseRad += additionalPhaseRad;
 
 			return AcousticBands.DbToAmplitude(gainDb);
 		}
