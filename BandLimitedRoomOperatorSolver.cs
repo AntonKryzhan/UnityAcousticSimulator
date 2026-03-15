@@ -147,41 +147,41 @@ namespace PhysicalAcousticsSim
 
                         float enclosure = EvaluateEnclosureFactor(point, materialBounds);
 
-                    for (int s = 0; s < speakers.Count; s++)
-                    {
-                        AcousticSpeaker speaker = speakers[s];
-                        if (speaker == null || !speaker.EmitToRoom) continue;
-
-                        Vector3 speakerPos = speaker.transform.position;
-                        Vector3 delta = point - speakerPos;
-                        float distance = delta.magnitude;
-                        if (distance > maxSourceDistanceMeters || distance <= 0.05f) continue;
-
-                        Vector3 direction = delta / distance;
-                        float directivity = speaker.GetDirectivityAmplitude(direction);
-                        if (directivity <= 0.0001f) continue;
-
-                        FillTransmissionAmplitudeAlongSegment(speakerPos, point, acousticLayerMask, GetPrimaryCollider(speaker), null, transmissionScratch);
-
-                        for (int b = 0; b < bandCount; b++)
+                        for (int s = 0; s < speakers.Count; s++)
                         {
-                            float sourcePhase = 0f;
-                            float driveDb = mixer != null ? mixer.GetSpeakerBandEmissionOffsetDb(speaker, b, out sourcePhase) : -speaker.NominalInputLevelDbuForMaxSpl;
+                            AcousticSpeaker speaker = speakers[s];
+                            if (speaker == null || !speaker.EmitToRoom) continue;
 
-                            float sourcePressurePa = speaker.GetNominalPressureAt1m(b, driveDb);
-                            float airDb = AcousticBands.AirAbsorptionDbPerMeter(AcousticBands.CenterFrequenciesHz[b], airTemperatureC, humidityPercent) * distance;
-                            float airAmp = AcousticBands.DbToAmplitude(-airDb);
-                            float bandCoupling = Mathf.Lerp(1.18f, 0.42f, b / (float)(AcousticBands.Count - 1));
+                            Vector3 speakerPos = speaker.transform.position;
+                            Vector3 delta = point - speakerPos;
+                            float distance = delta.magnitude;
+                            if (distance > maxSourceDistanceMeters || distance <= 0.05f) continue;
 
-                            float injected = sourcePressurePa * (directivity / Mathf.Max(1f, distance)) * transmissionScratch[b] * airAmp * effectiveSourceCoupling * enclosure * bandCoupling;
-                            source[b][idx] += injected;
+                            Vector3 direction = delta / distance;
+                            float directivity = speaker.GetDirectivityAmplitude(direction);
+                            if (directivity <= 0.0001f) continue;
+
+                            FillTransmissionAmplitudeAlongSegment(speakerPos, point, acousticLayerMask, GetPrimaryCollider(speaker), null, transmissionScratch);
+
+                            for (int b = 0; b < bandCount; b++)
+                            {
+                                float sourcePhase = 0f;
+                                float driveDb = mixer != null ? mixer.GetSpeakerBandEmissionOffsetDb(speaker, b, out sourcePhase) : -speaker.NominalInputLevelDbuForMaxSpl;
+
+                                float sourcePressurePa = speaker.GetNominalPressureAt1m(b, driveDb);
+                                float airDb = AcousticBands.AirAbsorptionDbPerMeter(AcousticBands.CenterFrequenciesHz[b], airTemperatureC, humidityPercent) * distance;
+                                float airAmp = AcousticBands.DbToAmplitude(-airDb);
+                                float bandCoupling = Mathf.Lerp(1.18f, 0.42f, b / (float)(AcousticBands.Count - 1));
+
+                                float injected = sourcePressurePa * (directivity / Mathf.Max(1f, distance)) * transmissionScratch[b] * airAmp * effectiveSourceCoupling * enclosure * bandCoupling;
+                                source[b][idx] += injected;
+                            }
                         }
                     }
-	                    }
-	                }
+                }
 
-	                for (int b = 0; b < bandCount; b++)
-	                {
+                for (int b = 0; b < bandCount; b++)
+                {
                     float[] field = new float[cellCount];
                     float[] next = new float[cellCount];
                     Array.Copy(source[b], field, cellCount);
